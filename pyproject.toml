@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-runtime-lab"
+version = "0.1.0a0"
+description = "An explicit, observable coding-agent runtime for learning."
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+agent-runtime = "runtime.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools]
+packages = ["runtime", "runtime.model", "runtime.tools", "runtime.policies", "runtime.sandbox"]

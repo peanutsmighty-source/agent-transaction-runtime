@@ -1,0 +1,22 @@
+[
+  {
+    "response_id": "response_1",
+    "items": [
+      {"type": "assistant_message", "content": "I will inspect the workspace."},
+      {"type": "tool_call", "call_id": "call_list", "name": "file", "arguments": {"operation": "list", "path": "."}}
+    ],
+    "usage": {"input_tokens": 20, "output_tokens": 10}
+  },
+  {
+    "response_id": "response_2",
+    "items": [
+      {"type": "tool_call", "call_id": "call_shell", "name": "shell", "arguments": {"command": "python -c \"print('workspace inspected')\""}}
+    ]
+  },
+  {
+    "response_id": "response_3",
+    "items": [
+      {"type": "final_answer", "content": "The workspace was inspected. This scripted example does not attempt a repair."}
+    ]
+  }
+]

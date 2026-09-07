@@ -37,6 +37,17 @@ class ToolExecution:
 
 
 @dataclass
+class VerificationAttempt:
+    candidate_answer: str
+    passed: bool
+    summary: str
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class ContextItemStat:
     id: str
     type: str
@@ -98,6 +109,7 @@ class AgentState:
     messages: list[Message] = field(default_factory=list)
     events: list[AgentEvent] = field(default_factory=list)
     tool_history: list[ToolExecution] = field(default_factory=list)
+    verification_history: list[VerificationAttempt] = field(default_factory=list)
     context_stats: ContextStats = field(default_factory=ContextStats)
     context_budget: ContextBudgetStatus = field(default_factory=ContextBudgetStatus)
     model_usage: ModelUsageTotals = field(default_factory=ModelUsageTotals)
@@ -111,6 +123,9 @@ class AgentState:
             "step_count": self.step,
             "model_calls": len([event for event in self.events if event.type.value == "model_request"]),
             "tool_calls": len(self.tool_history),
+            "verification_attempts": [
+                attempt.to_dict() for attempt in self.verification_history
+            ],
             "compactions": len([
                 event for event in self.events
                 if event.type.value == "context_compaction_applied"

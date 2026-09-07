@@ -34,6 +34,10 @@ class HostRunner:
                 duration_ms=int((perf_counter() - started) * 1000),
                 timed_out=True,
             )
+        except asyncio.CancelledError:
+            process.kill()
+            await process.wait()
+            raise
 
         return CommandExecution(
             exit_code=process.returncode,

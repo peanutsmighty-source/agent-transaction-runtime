@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 from runtime.actions import AssistantMessage, FinalAnswer, ToolCall
-from runtime.context import ContextBuilder
+from runtime.context import ContextBuilder, ContextItemType
 from runtime.loop import AgentLoop, RunConfig
 from runtime.model import FakeModelClient, ModelResponse, ModelUsage
-from runtime.policies import SlidingWindowCompaction, ToolApprovalPolicy
+from runtime.policies import FullSummaryCompaction, SlidingWindowCompaction, ToolApprovalPolicy
 from runtime.state import AgentStatus
 from runtime.events import EventType
+from runtime.summarization import FakeSummarizer
 from runtime.tools import FileTool, ToolRegistry, ToolRuntime
 
 
@@ -161,3 +163,109 @@ def test_loop_compacts_model_view_without_deleting_state_history(tmp_path: Path)
     assert len(compactions) == 1
     assert compactions[0].data["removed_tokens"] > 0
     assert state.summary()["compactions"] == 1
+
+
+def test_loop_sends_summary_and_recent_context_to_model(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    model = FakeModelClient([
+        ModelResponse(items=[AssistantMessage(character * 80) for character in "abcdef"]),
+        ModelResponse(items=[FinalAnswer("History summarized.")]),
+    ])
+    summarizer = FakeSummarizer(["Earlier work preserved the public API."])
+    loop = AgentLoop(
+        model,
+        ToolRuntime(registry),
+        ContextBuilder("short system"),
+        RunConfig(
+            max_steps=3,
+            trace_root=tmp_path / ".runs",
+            context_window_tokens=200,
+            reserved_output_tokens=20,
+            compact_threshold=0.5,
+            compaction_target_ratio=0.5,
+        ),
+        compaction_policy=FullSummaryCompaction(summarizer, min_recent_units=2),
+    )
+
+    state = asyncio.run(loop.run("short task"))
+
+    second_request = model.requests[1]
+    assert [item.type for item in second_request.items] == [
+        ContextItemType.SYSTEM,
+        ContextItemType.TASK,
+        ContextItemType.SUMMARY,
+        ContextItemType.ASSISTANT,
+        ContextItemType.ASSISTANT,
+    ]
+    assert second_request.items[2].content == "Earlier work preserved the public API."
+    assert len(state.messages) == 6
+    applied = [
+        event for event in state.events
+        if event.type == EventType.CONTEXT_COMPACTION_APPLIED
+    ]
+    assert applied[0].data["strategy"] == "full_summary"
+    assert applied[0].data["summarized_item_ids"] == [
+        "message_0",
+        "message_1",
+        "message_2",
+        "message_3",
+    ]
+    run_directory = next((tmp_path / ".runs").iterdir())
+    context_records = [
+        json.loads(line)
+        for line in (run_directory / "context.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    pre_compaction = next(
+        record for record in context_records
+        if record["step"] == 1 and record["view"] == "pre_compaction"
+    )
+    model_input = next(
+        record for record in context_records
+        if record["step"] == 1 and record["view"] == "model_input"
+    )
+    assert len(pre_compaction["items"]) == 8
+    assert [item["type"] for item in model_input["items"]] == [
+        "system",
+        "task",
+        "summary",
+        "assistant",
+        "assistant",
+    ]
+
+
+def test_loop_records_summary_failure_and_sliding_window_fallback(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    model = FakeModelClient([
+        ModelResponse(items=[AssistantMessage(character * 80) for character in "abcdef"]),
+        ModelResponse(items=[FinalAnswer("Used fallback.")]),
+    ])
+    loop = AgentLoop(
+        model,
+        ToolRuntime(registry),
+        ContextBuilder("short system"),
+        RunConfig(
+            max_steps=3,
+            trace_root=tmp_path / ".runs",
+            context_window_tokens=200,
+            reserved_output_tokens=20,
+            compact_threshold=0.5,
+            compaction_target_ratio=0.5,
+        ),
+        compaction_policy=FullSummaryCompaction(
+            FakeSummarizer([RuntimeError("offline")]),
+            min_recent_units=2,
+        ),
+    )
+
+    state = asyncio.run(loop.run("short task"))
+
+    failures = [
+        event for event in state.events
+        if event.type == EventType.CONTEXT_COMPACTION_FAILED
+    ]
+    assert state.status == AgentStatus.COMPLETED
+    assert len(failures) == 1
+    assert failures[0].data["fallback_strategy"] == "sliding_window"
+    assert failures[0].data["error"] == "summarizer_failed"
+    assert failures[0].data["error_detail"] == "RuntimeError: offline"
+    assert all(item.type != ContextItemType.SUMMARY for item in model.requests[1].items)

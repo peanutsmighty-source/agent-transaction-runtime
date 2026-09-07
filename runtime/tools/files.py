@@ -14,7 +14,21 @@ class FileTool:
         self.workspace = workspace.resolve()
 
     def schema(self) -> dict[str, Any]:
-        return {"name": self.name, "description": self.description, "parameters": {"operation": "read|write|list", "path": "relative path", "content": "for write"}}
+        return {
+            "type": "function",
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {"type": "string", "enum": ["read", "write", "list"]},
+                    "path": {"type": "string", "description": "Path relative to the workspace."},
+                    "content": {"type": "string", "description": "Required when operation is write."},
+                },
+                "required": ["operation"],
+                "additionalProperties": False,
+            },
+        }
 
     def _path(self, raw_path: str) -> Path:
         candidate = (self.workspace / raw_path).resolve()

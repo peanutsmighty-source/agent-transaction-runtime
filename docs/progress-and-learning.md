@@ -10,9 +10,9 @@
 
 Agent Runtime Lab 是一个用来拆解 Coding Agent 工作原理的教学项目。
 
-它现在已经有了 Agent 的主要骨架，但还没有接入真实大模型，因此更准确地说，它是：
+它现在已经有了 Agent 的主要骨架并接入了真实模型，但尚未通过复杂 Coding Task 验收，因此更准确地说，它是：
 
-> 可运行、可观察、可测试的单 Agent Runtime 教学原型。
+> 可运行、可观察、可测试，并已完成最小真实模型工具闭环的单 Agent Runtime 教学原型。
 
 它的目标不是尽快做出另一个 Codex 或 Claude Code，而是把这些产品隐藏起来的核心机制逐个实现、观察和比较。
 
@@ -63,6 +63,15 @@ ModelResponse
 
 每次工具调用都有 `call_id`。工具结果使用同一个 ID，避免多次工具调用时把问题和答案配错。
 
+### 已完成：OpenAI Responses 适配层
+
+- 使用官方 SDK 连接 Responses API，但 SDK 不接管 Agent Loop 或工具执行。
+- 流式 SSE 只有收到 `response.completed` 才算成功；中途断线不会把部分文字当答案。
+- 工具调用和结果在下一轮保持为结构化 `function_call` / `function_call_output`。
+- 本地 Mock Server 已覆盖字节分片、断线和一次完整的“模型—工具—模型”循环，不产生真实 API 费用。
+- 429、500 和 timeout 已有可控测试；Provider 错误会把状态码、request ID 和是否可重试写入 trace。
+- 已提供默认跳过的真实 API smoke harness；2026-09-04 使用 DeepSeek `deepseek-v4-flash` 实测了普通响应和完整的“模型—FileTool—模型”循环。
+
 ### 已完成：可观察的 Context
 
 - `ContextItem` 明确区分 system、task、assistant 和 tool result。
@@ -70,12 +79,14 @@ ModelResponse
 - `ContextBudget` 判断模型输入是否接近预算上限。
 - 每次运行产生结构化 trace，可以查看 Agent 当时看到了什么、调用了什么工具、为什么停止。
 
-### 已完成：第一种 Context 压缩基线
+### 已完成：两种 Context 压缩策略
 
 - 过长工具输出采用“保留开头和结尾”的截断方式。
 - `SlidingWindowCompaction` 在超预算时保留最近内容。
 - 压缩只改变“这一轮给模型看的内容”，不会删除 `AgentState` 和 trace 中的完整历史。
 - `ToolCall` 与对应的 `ToolResult` 被组成一个 `ContextUnit`，压缩时一起保留或一起删除，不会留下半次工具交互。
+- `FullSummaryCompaction` 把较早的完整 unit 总结为可读 `SUMMARY`，同时原样保留最近 unit。
+- 摘要由可注入的异步 `Summarizer` 产生；当前使用 Fake，失败或摘要超预算时明确记录并回退 Sliding Window。
 
 ### 已完成代码、等待实机验收：Docker Sandbox
 
@@ -85,18 +96,13 @@ ModelResponse
 
 由于本机启动 Docker 时内存不足并导致系统崩溃，目前只完成了参数级测试，尚未证明这些隔离边界在本机真实有效。因此不能把 Docker Runner 标记为“已经安全验收”。
 
-### 正在进行：Context Compaction
+### 正在进行：单 Agent Loop 的任务级验收
 
-Sliding Window 只是最简单的对照方案。接下来还要完成：
-
-- Full Summary：把较早历史总结成可读文字。
-- Structured Compaction：把约束、决定、失败经验、修改文件和下一步保存成结构化状态。
-- Long-horizon retention 评测：检查压缩后是否还记得重要信息。
+当前优先建立 TaskVerifier、复杂分支场景、真实代码修复任务、取消生命周期和高层 Retry Policy。只有这些完成后，才进入 Context 策略质量比较和正式 benchmark。
 
 ### 尚未开始
 
-- 真实模型 provider adapter。
-- 模型请求超时、重试和流式输出。
+- 生产级真实网络、限流与长任务稳定性测试。
 - 交互式审批界面。
 - Replay 和完整 benchmark。
 - Multi-Agent 的 spawn、wait、cancel 和结果汇总。
@@ -171,9 +177,9 @@ Sliding Window 只是最简单的对照方案。接下来还要完成：
 
 ## 当前最重要的限制
 
-1. 仍使用 Fake Model，不能完成模型自主规划的真实 Coding Task。
+1. 真实 Provider 已完成最小外部 smoke，但还没有运行真实代码修改任务或长期任务 benchmark。
 2. token 是近似估算，不等于模型供应商的真实计费数据。
-3. Sliding Window 可能遗忘较早的重要约束。
+3. Sliding Window 可能遗忘较早的重要约束；Full Summary 可能遗漏或错误概括事实。
 4. Docker Sandbox 尚未经过本机真实隔离测试。
 5. HostRunner 没有隔离能力，不能用于不可信命令。
 6. 没有完整的任务 benchmark，暂时不能用数据证明策略优劣。
@@ -183,10 +189,10 @@ Sliding Window 只是最简单的对照方案。接下来还要完成：
 
 不使用时间节点，只按阶段验收：
 
-1. 完成 Full Summary 和 Structured Compaction。
-2. 建立约束、决定、失败记录等长期信息保留测试。
-3. 接入一个真实模型 provider，并保留显式 Agent Loop。
-4. 建立真实 Coding Task benchmark 和 Replay。
+1. 用 TaskVerifier 和复杂场景证明单 Agent Loop 能完成真实 Coding Task。
+2. 实现取消生命周期和 Provider 无关的高层 Retry Policy。
+3. 完成真实 Full Summary、Structured Compaction 和 retention 测试。
+4. 实现 Replay，再建立正式 Coding Task benchmark。
 5. 更换内存后完成 Docker Sandbox 实机验收。
 6. 单 Agent 稳定后，再进入最小 Multi-Agent。
 
@@ -198,6 +204,9 @@ Sliding Window 只是最简单的对照方案。接下来还要完成：
 - `docs/approval-policy.md`：为什么模型请求不等于用户授权。
 - `docs/sandbox-runner.md`：Host 和 Docker 执行环境的区别。
 - `docs/sliding-window-compaction.md`：当前压缩策略如何工作。
+- `docs/full-summary-compaction.md`：异步摘要、失败回退和事实保留如何工作。
+- `docs/openai-responses-provider.md`：真实 Provider、SSE 分片和断线边界如何工作。
+- `docs/interview-guide.md`：把已实现机制整理成面试可复述答案和追问。
 - `docs/design-notes.md`：所有关键设计决定的集中记录。
 - `TODO.md`：尚未完成和暂缓的任务。
 

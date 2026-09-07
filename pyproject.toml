@@ -7,7 +7,7 @@ name = "agent-runtime-lab"
 version = "0.1.0a0"
 description = "An explicit, observable coding-agent runtime for learning."
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["openai>=1.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]

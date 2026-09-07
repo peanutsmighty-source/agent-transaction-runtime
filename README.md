@@ -2,11 +2,13 @@
 
 一个用于学习 Agent Runtime 核心机制的最小、显式、可观测 Coding Agent。
 
-当前已经完成单 Agent 基础骨架和 Context Inspector，正在进行 Compaction 阶段：
+当前已经完成单 Agent 基础骨架、Context Inspector、两种 Compaction 基线和真实模型适配层：
 单 Agent loop、状态和事件、文件/shell 工具、workspace 路径校验、审批策略、
 Host/Docker 命令 Runner、结构化 execution trace、Tool Output Truncation 和
-Sliding Window Compaction 均已有实现。尚未实现真实模型 provider、OS 原生 sandbox、
-Full Summary/Structured Compaction 或 multi-agent；Docker 隔离也尚未完成实机验收。
+Sliding Window Compaction、可注入 Fake Summarizer 的 Full Summary Compaction，以及
+Responses-compatible 流式 Provider 均已有实现。
+尚未实现 OS 原生 sandbox、Structured Compaction 或 multi-agent；
+Docker 隔离也尚未完成实机验收。
 
 如果你第一次阅读本项目，建议先看[项目进度与学习记录](docs/progress-and-learning.md)。
 它用尽量少的术语解释当前做到哪里、每个机制解决什么问题，以及接下来要学习什么。
@@ -66,7 +68,26 @@ python -m runtime run "fix the add function" --workspace examples/demo_project -
 {"response_id": "response_2", "items": [{"type": "final_answer", "content": "Finished."}]}
 ```
 
-真实模型接入将是下一轮阶段 A 的增量；模型 SDK 只会位于 `runtime/model/`，不会隐藏 Agent Loop。
+使用任意兼容 Responses API 的供应商。以 DeepSeek 为例：
+
+```powershell
+python -m runtime run "inspect the workspace" `
+  --workspace examples/demo_project `
+  --provider responses `
+  --provider-name deepseek `
+  --api-base-url https://api.deepseek.com `
+  --api-key-file E:\tmp\key.txt `
+  --model deepseek-v4-flash
+```
+
+生产使用更推荐把密钥放在环境变量中，并用 `--api-key-env` 指定变量名；
+`--api-key-file` 主要用于本地实验，文件必须放在仓库外。
+
+模型 SDK 只位于 `runtime/model/`，不会隐藏 Agent Loop。当前已经用本地 Mock Server
+覆盖 HTTP/SSE、工具调用往返、中途断线、429/5xx 重试和 timeout；真实 API smoke
+必须通过环境变量显式开启。2026-09-04 已使用 DeepSeek 官方 Responses API 和
+`deepseek-v4-flash` 验证普通响应与完整 Agent Loop 工具往返。
+协议与测试边界见 [Responses-compatible Provider](docs/openai-responses-provider.md)。
 
 使用已经在本机准备好的 Docker 镜像执行 shell：
 
@@ -83,6 +104,8 @@ python -m runtime run "inspect the workspace" --workspace examples/demo_project 
 ```
 
 它只缩小模型可见的 Context，不会删除 AgentState 和 trace 中的完整历史。共享 `tool_call_id` 的调用与结果会作为一个不可拆分的 ContextUnit 保留或删除。Docker 的真实隔离验收因本机内存升级暂缓，状态见 `TODO.md`。
+
+Full Summary 当前通过 Python API 注入 `FullSummaryCompaction` 和 `Summarizer` 使用。首版提供确定性的 `FakeSummarizer` 用于实验与测试，尚未提供真实摘要模型的 CLI 选项。设计和失败回退见[Full Summary Compaction](docs/full-summary-compaction.md)。
 
 ## 安全边界
 

@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from .actions import AssistantMessage, FinalAnswer, ReasoningSummary, ToolCall
 from .context import ContextBuilder
 from .loop import AgentLoop, RunConfig
-from .model import FakeModelClient, ModelResponse, ModelUsage
+from .model import FakeModelClient, ModelResponse, ModelUsage, ResponsesModelClient
 from .observer import ContextObserver
 from .policies import SlidingWindowCompaction, ToolApprovalPolicy
 from .sandbox import DockerSandboxRunner, HostRunner
@@ -41,6 +42,18 @@ def _load_responses(path: Path) -> list[ModelResponse]:
     return responses
 
 
+def _read_api_key(args: argparse.Namespace) -> str:
+    if args.api_key_file is not None:
+        key = args.api_key_file.read_text(encoding="utf-8").strip()
+        if not key:
+            raise ValueError("responses_api_key_file_is_empty")
+        return key
+    key = os.environ.get(args.api_key_env, "").strip()
+    if not key:
+        raise ValueError(f"responses_api_key_env_is_missing: {args.api_key_env}")
+    return key
+
+
 async def _run(args: argparse.Namespace) -> int:
     workspace = args.workspace.resolve()
     if args.shell_runner == "docker":
@@ -54,7 +67,24 @@ async def _run(args: argparse.Namespace) -> int:
     registry = ToolRegistry()
     registry.register(FileTool(workspace))
     registry.register(ShellTool(workspace, timeout_seconds=args.tool_timeout, runner=runner))
-    model = FakeModelClient(_load_responses(args.responses))
+    if args.provider == "fake":
+        if args.responses is None:
+            raise ValueError("--responses is required when --provider=fake")
+        model = FakeModelClient(_load_responses(args.responses))
+    else:
+        if not args.model:
+            raise ValueError("--model is required when --provider=responses")
+        provider_name = args.provider_name or (
+            "openai" if args.provider == "openai" else "responses"
+        )
+        model = ResponsesModelClient(
+            args.model,
+            provider_name=provider_name,
+            api_key=_read_api_key(args),
+            base_url=args.api_base_url,
+            timeout=args.model_timeout,
+            max_retries=args.model_max_retries,
+        )
     loop = AgentLoop(
         model=model,
         tools=ToolRuntime(registry),
@@ -78,7 +108,11 @@ async def _run(args: argparse.Namespace) -> int:
             else None
         ),
     )
-    state = await loop.run(args.task)
+    try:
+        state = await loop.run(args.task)
+    finally:
+        if isinstance(model, ResponsesModelClient):
+            await model.close()
     print(json.dumps(state.summary(), ensure_ascii=False, indent=2))
     if args.show_context:
         print()
@@ -88,13 +122,40 @@ async def _run(args: argparse.Namespace) -> int:
     return 0 if state.status.value == "completed" else 1
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the explicit Agent Runtime Lab loop with a scripted fake model.")
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run the explicit Agent Runtime Lab loop.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     run = subparsers.add_parser("run")
     run.add_argument("task")
     run.add_argument("--workspace", type=Path, required=True)
-    run.add_argument("--responses", type=Path, required=True, help="JSON actions for FakeModelClient")
+    run.add_argument(
+        "--provider",
+        choices=("fake", "responses", "openai"),
+        default="fake",
+        help="Model adapter; openai is a backward-compatible alias for responses",
+    )
+    run.add_argument("--responses", type=Path, help="JSON actions for --provider=fake")
+    run.add_argument("--model", help="Model ID required by --provider=responses")
+    run.add_argument("--provider-name", help="Provider label written to errors and trace")
+    run.add_argument(
+        "--api-base-url",
+        "--openai-base-url",
+        dest="api_base_url",
+        help="Responses-compatible API base URL",
+    )
+    key_source = run.add_mutually_exclusive_group()
+    key_source.add_argument(
+        "--api-key-env",
+        default="OPENAI_API_KEY",
+        help="Environment variable containing the API key",
+    )
+    key_source.add_argument(
+        "--api-key-file",
+        type=Path,
+        help="Plaintext key file outside the repository; environment variables are safer",
+    )
+    run.add_argument("--model-timeout", type=float, default=60)
+    run.add_argument("--model-max-retries", type=int, default=2)
     run.add_argument("--max-steps", type=int, default=20)
     run.add_argument("--tool-timeout", type=float, default=15)
     run.add_argument(
@@ -129,6 +190,15 @@ def main() -> None:
     run.add_argument("--allow-shell", action="store_true", help="Pre-approve ShellTool calls for this run; this is not a sandbox")
     run.add_argument("--show-context", action="store_true")
     run.add_argument("--trace-root", type=Path, default=Path(".runs"))
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
     if args.command == "run":
+        if args.provider == "fake" and args.responses is None:
+            parser.error("--responses is required when --provider=fake")
+        if args.provider != "fake" and not args.model:
+            parser.error("--model is required when --provider=responses")
         raise SystemExit(asyncio.run(_run(args)))

@@ -24,7 +24,20 @@ class ShellTool:
         self.runner = runner if runner is not None else HostRunner()
 
     def schema(self) -> dict[str, Any]:
-        return {"name": self.name, "description": self.description, "parameters": {"command": "shell command", "cwd": "optional relative directory"}}
+        return {
+            "type": "function",
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Shell command to run."},
+                    "cwd": {"type": "string", "description": "Optional workspace-relative directory."},
+                },
+                "required": ["command"],
+                "additionalProperties": False,
+            },
+        }
 
     def _cwd(self, raw_cwd: str) -> Path:
         cwd = (self.workspace / raw_cwd).resolve()

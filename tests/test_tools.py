@@ -117,3 +117,13 @@ def test_unknown_tool_is_a_structured_observation() -> None:
     result = asyncio.run(ToolRuntime(ToolRegistry()).execute(ToolCall("call_missing", "missing", {})))
     assert result.success is False
     assert result.error == "unknown_tool: missing"
+
+
+def test_tool_schemas_use_responses_function_tool_shape(tmp_path: Path) -> None:
+    file_schema = FileTool(tmp_path).schema()
+    shell_schema = ShellTool(tmp_path).schema()
+
+    assert file_schema["type"] == "function"
+    assert file_schema["parameters"]["type"] == "object"
+    assert file_schema["parameters"]["additionalProperties"] is False
+    assert shell_schema["parameters"]["required"] == ["command"]

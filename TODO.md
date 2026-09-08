@@ -35,12 +35,16 @@
 
 P0 证明短任务 Loop 后，再验证长任务不会因 Context 管理失真。
 
+- [ ] 定义 Memory/Retention Contract：区分 pinned、verified、derived、stale 和 contradiction；明确哪些事实必须由 Runtime 强制核验，不能依赖模型主动按 provenance 查询。
+- [ ] 建立错误摘要注入与 long-horizon retention 测试：测量关键事实遗漏、虚构、过期事实使用、核验触发和多次压缩后的任务成功率。
+- [ ] 实现 Structured Working State 与 provenance schema：来源 ID 只是可追溯指针，高风险 claim 还必须有版本/hash 和核验策略。
+- [ ] 实现 Artifact Store 与有界 Evidence Retrieval：完整工具输出留在 Context 外，只按 token/item/call 预算取回当前所需片段。
+- [ ] 实现 Verification Policy：副作用前、完成前、claim 过期或冲突时由 Runtime 强制 read-back；不能等待模型自行怀疑摘要。
 - [ ] 完成真实 Full Summary 运行链路：
   - [x] 通过隔离、无工具的模型轮次接入 Responses Summarizer，并支持 CLI 独立 `--summary-model`。
   - [ ] 为摘要调用实现 timeout、有限重试和费用边界。
-  - [ ] 实现以原始历史与配置为键的派生摘要缓存，不把摘要变成事实来源。
-- [ ] 实现 Structured Compaction：显式保存约束、决定、失败经验、修改文件和下一步。
-- [ ] 建立 long-horizon retention 测试：验证早期约束、关键决定和失败经验在压缩后仍可恢复。
+  - [ ] 在质量契约和错误摘要测试建立后，实现以原始历史与配置为键的派生摘要缓存，不把摘要变成事实来源。
+- [ ] 实现分层 Structured Compaction：显式保存约束、决定、失败经验、修改文件和下一步；阶段 checkpoint 可版本化并定期从原始事实重建，避免无限摘要旧摘要。
 - [ ] 对同一历史比较 Sliding Window、Full Summary 和 Structured Compaction，记录遗漏、幻觉、token、延迟和费用。
 - [ ] 实现 Trace Replay：用已记录的模型响应和工具 observation 重放 Loop，复现失败而不再次付费。
 

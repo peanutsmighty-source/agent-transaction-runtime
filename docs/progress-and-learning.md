@@ -100,6 +100,8 @@ ModelResponse
 
 TaskVerifier、复杂分支场景、真实代码修复任务、取消生命周期和高层 Model Retry Policy 已完成基线。真实 Summarizer 的隔离 Provider 链路也已接通；下一步是摘要专用 timeout/retry/费用边界、派生缓存、long-horizon retention、Structured Compaction 与 Trace Replay。在这些质量证据完成前不开始正式 benchmark。
 
+新的设计结论是：provenance 不等于自动纠错，Evidence Retrieval 也会重新占用 Context。P1 因此先定义 Memory/Retention Contract，并用错误摘要注入测试证明 Runtime 能在高风险边界强制核验；之后再做 Structured State、Artifact Store、有界 Retrieval 和分层摘要，最后才优化摘要缓存。问题与方案清单见 `docs/context-memory-risks.md`。
+
 ### 尚未开始
 
 - 生产级真实网络、限流与长任务稳定性测试。
@@ -177,9 +179,9 @@ TaskVerifier、复杂分支场景、真实代码修复任务、取消生命周�
 
 ## 当前最重要的限制
 
-1. 真实 Provider 已完成最小外部 smoke，但还没有运行真实代码修改任务或长期任务 benchmark。
+1. 真实 Provider 已完成核心 Coding Task 重复实验，但还没有 long-horizon retention 和正式 benchmark。
 2. token 是近似估算，不等于模型供应商的真实计费数据。
-3. Sliding Window 可能遗忘较早的重要约束；Full Summary 可能遗漏或错误概括事实。
+3. Sliding Window 可能遗忘较早的重要约束；Full Summary 可能遗漏或错误概括事实；provenance 目前也不能触发 Runtime 强制核验。
 4. Docker Sandbox 尚未经过本机真实隔离测试。
 5. HostRunner 没有隔离能力，不能用于不可信命令。
 6. 没有完整的任务 benchmark，暂时不能用数据证明策略优劣。
@@ -189,12 +191,14 @@ TaskVerifier、复杂分支场景、真实代码修复任务、取消生命周�
 
 不使用时间节点，只按阶段验收：
 
-1. 为 Full Summary 接入真实 Summarizer Provider，并补 timeout、有限重试和派生缓存。
-2. 实现 Structured Compaction 与 long-horizon retention 测试。
-3. 完成真实 Full Summary、Structured Compaction 和 retention 测试。
-4. 实现 Replay，再建立正式 Coding Task benchmark。
-5. 更换内存后完成 Docker Sandbox 实机验收。
-6. 单 Agent 稳定后，再进入最小 Multi-Agent。
+1. 定义 Memory/Retention Contract，并建立错误摘要注入和 long-horizon retention 测试。
+2. 实现 Pinned Context、Structured Working State 和 provenance schema。
+3. 实现 Artifact Store、有界 Evidence Retrieval 与 Runtime 强制 Verification Policy。
+4. 实现分层 Structured Compaction，再补摘要 timeout/retry/费用边界和派生缓存。
+5. 比较 Sliding Window、Full Summary、Structured/分层方案和可用的 Provider-native Compaction。
+6. 实现 Replay，再建立正式 Coding Task benchmark。
+7. 更换内存后完成 Docker Sandbox 实机验收。
+8. 单 Agent 稳定后，再进入最小 Multi-Agent。
 
 ## 从哪里继续阅读
 
@@ -205,6 +209,7 @@ TaskVerifier、复杂分支场景、真实代码修复任务、取消生命周�
 - `docs/sandbox-runner.md`：Host 和 Docker 执行环境的区别。
 - `docs/sliding-window-compaction.md`：当前压缩策略如何工作。
 - `docs/full-summary-compaction.md`：异步摘要、失败回退和事实保留如何工作。
+- `docs/context-memory-risks.md`：错误摘要、provenance、证据取回、注意力偏移等风险和计划中的应对方案。
 - `docs/openai-responses-provider.md`：真实 Provider、SSE 分片和断线边界如何工作。
 - `docs/interview-guide.md`：把已实现机制整理成面试可复述答案和追问。
 - `docs/design-notes.md`：所有关键设计决定的集中记录。

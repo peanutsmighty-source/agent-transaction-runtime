@@ -153,6 +153,10 @@ Sliding Window 会无条件忘掉窗口外历史，无法保留很早但仍有�
 
 生产 Agent 同样需要通过压缩或保存外部状态延长任务跨度。OpenAI Responses compaction 使用 opaque 压缩项，公开的 Anthropic 指南也说明 Claude Code/agent harness 会自动 compact。我们的自然语言摘要可读、可替换、便于教学评测，但比 opaque/provider-native 压缩更容易被模型误读，也缺少真实 tokenizer、摘要专用 retry、缓存和质量保证。重新总结完整旧历史避免误差逐代累积，却会在真实 provider 下增加延迟和费用；后续可用派生缓存和 Structured Compaction 比较。
 
+### Memory 可信边界
+
+Provenance 只回答“这条派生 claim 来自哪里”，不能证明 claim 正确，也不能保证模型会主动回查。Retrieval 会把证据重新加入当轮 Context，因此也不是免费记忆。后续主线采用风险分级：高风险 claim 在副作用、完成、过期或冲突边界由 Runtime 强制 read-back；证据按 token/item/call 预算取回短片段，阶段结束后移出活跃视图。无法被模型、用户或 verifier 察觉的错误仍是残余风险，必须通过错误摘要注入和 long-horizon retention 测试量化。完整风险登记见 `docs/context-memory-risks.md`。
+
 ## 重复失败工具调用检测
 
 ### 问题

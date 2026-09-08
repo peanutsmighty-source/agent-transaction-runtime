@@ -30,9 +30,9 @@ response.completed           整个响应正式完成
 建立响应流之后：只收到部分 SSE，随后断线或收到 error 事件
 ```
 
-第一类失败尚未产生可用模型响应，当前交给官方 SDK 按 `max_retries` 重试。Mock Server 已验证 429 和 500 在一次失败后可以重试恢复，timeout 会被统一映射为 `ModelProviderError(code="timeout", retryable=True)`。
+第一类失败会统一映射为 `ModelProviderError`。SDK 仍保留可配置的 `max_retries`，但 CLI 默认设为 0，由 AgentLoop 外层的 `ModelRetryPolicy` 根据 retryable、最大尝试、退避和 token 预算决策，避免 SDK 与 Runtime 两层重试次数相乘。
 
-第二类失败不能盲目自动重放。虽然当前 Agent 尚未执行未完成响应中的工具，但请求可能已经在供应商侧产生费用或状态；因此流中断只标记为可重试错误并停止 Loop，暂不在 Provider 内自动再次请求。之后应由更高层 Retry Policy 结合幂等性和预算决定是否重试。
+第二类失败不在 Provider 内盲目重放。Provider 丢弃未完成缓冲并标记为 retryable；高层 Policy 可以重发同一 Context，因为任何 ResponseItem 和 ToolCall 都还没有提交到 AgentState。供应商侧仍可能已经计费，因此尝试次数和估算 token 必须有界。
 
 Provider 错误写入 `runtime_error` event 时包含：错误类型、provider、稳定错误码、HTTP 状态码、request ID、`retryable` 和供应商返回的结构化错误 detail。这让 trace 能区分“模型拒绝任务”“被限流”和“网络坏了”，也能定位 400 对应的具体协议字段。detail 只来自错误响应体，不记录请求头或 API key。
 
@@ -64,7 +64,7 @@ Responses function_call(call_id, name, JSON arguments)
 - tool call/result 在下一轮仍保持结构化；
 - 完成事件前断线会失败，不会误报成功；
 - 完整 Agent Loop 能经过真实 HTTP/SSE 适配层执行工具并完成第二轮。
-- 429 与 500 会按配置重试，timeout 和流内 error 会进入结构化失败路径。
+- SDK retry 关闭时，Runtime Policy 能从 429 和 SSE 提前 EOF 恢复；400、timeout 和流内 error 的结构化失败边界也有覆盖。
 
 这些 Mock 测试不访问外部服务、没有 API 费用，并能稳定复现异常。2026-09-04 另使用 DeepSeek 官方 Responses API 与 `deepseek-v4-flash` 完成两组真实 smoke：最小文本响应，以及包含一次 FileTool 调用和第二轮最终回答的完整 Agent Loop。真实限流、长时间运行和生产负载仍未实测。
 

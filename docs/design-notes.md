@@ -89,7 +89,7 @@ Fake Model 能稳定验证 Loop，却不能证明真实 HTTP、SSE 和 function 
 
 `ResponsesModelClient` 是 `ModelClient` 的适配器。它把显式 `ContextItem` 映射为 Responses input，把完成的 output item 映射回 provider-neutral 的 `ResponseItem`。工具调用与结果在 State/Context 中使用独立类型和同一个 `call_id`，下一轮分别发送为 `function_call` 与 `function_call_output`。只有 `response.completed` 才是成功终点；提前 EOF 不接受部分结果。`provider_name`、base URL、模型和密钥来源是配置，不进入 Loop。
 
-429、5xx 和建立连接阶段的 timeout 使用 SDK 的有限重试配置。流建立后的错误不在 adapter 内自动重放，而是产生带 provider、状态码、request ID 和 retryable 标记的结构化 Runtime Error，留给未来的高层 Retry Policy 决定。
+429、5xx、连接失败、timeout 和流中断会被 adapter 归一化为带 provider、状态码、request ID 和 retryable 标记的结构化 Runtime Error。CLI 默认关闭 SDK retry，由 Agent Loop 外层的 `ModelRetryPolicy` 统一决定是否重试，避免两层尝试次数相乘。
 
 ### 主流做法与取舍
 
@@ -199,3 +199,17 @@ Sliding Window 会无条件忘掉窗口外历史，无法保留很早但仍有�
 ### 主流做法与取舍
 
 生产 Agent 同样需要结构化并发和向下取消，而不是轮询一个布尔字段。当前 asyncio task cancellation 简单且能覆盖单进程 Runtime，但还没有产品级 cancel handle、CLI/UI 取消命令和取消超时。HostRunner 杀死直接 shell 进程，在 Windows 上不能保证任意孙进程都被递归清理；DockerRunner 的真实容器清理仍待硬件升级后验收。因此这是可测试的生命周期基线，不是完整生产保证。
+
+## Model Retry Policy
+
+### 问题
+
+429、临时服务错误、连接失败、timeout 和 SSE 中断可能发生在有效 ModelResponse 提交之前。完全不重试会把短暂故障放大成任务失败；重跑整个 Agent step 则可能重复工具副作用。
+
+### 设计
+
+Retry 边界只包裹 `ModelClient.generate()`。Provider 先把供应商错误归一化为带 `retryable` 的 `ModelProviderError`，`ModelRetryPolicy` 再根据最大尝试、指数退避和可选估算输入 token 预算决定是否用完全相同的 Context 重试。未收到 completed 的部分流不会提交 State，因此不会提前执行其中 ToolCall；上一轮已经完成的工具也不在重试范围内。CLI 默认关闭 SDK retry，避免 Provider 和 Runtime 两层次数相乘。
+
+### 主流做法与取舍
+
+生产系统通常把 transport retry、orchestration retry 和业务副作用 retry 分开，并使用 jitter、Retry-After、幂等键与全局费用预算。当前实现是确定、可观察的模型请求级基线；token 仍是字符估算，失败请求的真实费用不可见，也没有实现工具副作用重试或跨进程恢复。完整说明见 `docs/retry-policy.md`。

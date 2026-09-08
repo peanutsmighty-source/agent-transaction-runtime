@@ -28,6 +28,11 @@ def test_cli_accepts_generic_responses_provider_configuration() -> None:
     assert args.provider_name == "deepseek"
     assert args.api_base_url == "https://api.deepseek.com"
     assert args.api_key_file == Path("E:/tmp/key.txt")
+    assert args.model_max_retries == 0
+    assert args.model_retry_max_attempts == 3
+    assert args.model_retry_base_delay == 0.5
+    assert args.model_retry_max_delay == 4.0
+    assert args.model_retry_token_budget is None
 
 
 def test_cli_reads_key_from_named_environment_variable(monkeypatch) -> None:

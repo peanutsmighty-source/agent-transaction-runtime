@@ -6,6 +6,7 @@ from .compaction import (
     SlidingWindowCompaction,
 )
 from .loop_detection import RepeatedFailedActionDetector
+from .retry import ModelRetryPolicy, RetryDecision
 from .tool_output import ToolOutputPolicy
 
 __all__ = [
@@ -16,6 +17,8 @@ __all__ = [
     "FullSummaryCompaction",
     "ToolApprovalPolicy",
     "RepeatedFailedActionDetector",
+    "ModelRetryPolicy",
+    "RetryDecision",
     "SlidingWindowCompaction",
     "ToolOutputPolicy",
 ]

@@ -29,7 +29,7 @@
     - [x] DeepSeek 多文件实现重复 3 次，独立测试验收 3/3 通过。
     - [x] DeepSeek 首次验证失败后二次修复故障注入场景重复 3 次，3/3 通过。
 - [x] 实现取消生命周期基线：asyncio 取消传播到模型流和工具 Runner，清理后写入 `CANCELLED` 状态与 trace；产品 cancel handle、Windows 任意孙进程和 Docker 实机清理仍属后续边界。
-- [ ] 实现 Provider 无关的高层 Retry Policy：区分请求建立失败、流中断和工具副作用，明确幂等性、最大尝试、退避、费用与 token 预算。
+- [x] 实现 Provider 无关的高层 Model Retry Policy：区分 retryable 请求失败、流中断和工具副作用；支持最大尝试、指数退避、估算输入 token 预算和 trace。失败请求真实费用、Retry-After、jitter 与 Tool Retry 仍为后续边界。
 
 ## P1：让长任务中的 Context 和调试能力可信
 

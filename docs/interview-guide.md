@@ -38,7 +38,7 @@ function_call(call_id, name, arguments)
 
 常见追问：流中断为什么不直接自动重试？
 
-> 因为请求可能已经产生费用或远端状态，盲目重放不是天然幂等。当前 adapter 标记 `retryable` 并停止，未来由高层 Retry Policy 结合调用阶段、预算和幂等性决定。
+> Provider 不在协议解析层盲目重放，而是标记 `retryable`。当前高层 ModelRetryPolicy 只重试尚未提交 ModelResponse 的 `generate()`，并受尝试次数、退避和估算 token 预算约束；已执行工具不会被重放。请求仍可能重复计费，因此不能无限重试。
 
 ### 流式响应如何管理状态、断线和取消？
 
@@ -81,7 +81,19 @@ RUNNING --用户取消并完成资源清理--> CANCELLED
 - timeout：在规定时间内没有完成连接、读取或响应。
 - 协议映射：把供应商的 message/function_call/usage/error 转成 Runtime 自己的 `ResponseItem`、`ModelUsage` 和 `ModelProviderError`。
 
-当前 Agent Loop 不直接解析 HTTP。SDK/Provider 处理分片和请求级有限重试；Provider 将失败归一化；Loop 在 runtime 边界捕获错误，转为 FAILED 并写 trace。工具失败则不同：它被包装为 `ToolResult` 返回模型，让模型有机会修正，而不是直接让 Loop 崩溃。
+当前 Agent Loop 不直接解析 HTTP。Provider 处理分片并将错误归一化；高层 ModelRetryPolicy 对 retryable 的未提交模型请求做有限重试，耗尽后由 Loop 转为 FAILED 并写 trace。工具失败则不同：它被包装为 `ToolResult` 返回模型，让模型有机会修正，而不是自动重放有副作用的操作。
+
+## 高频问题：为什么 Retry 不能包住整个 Agent step？
+
+一个 step 可能先取得 ModelResponse，再执行写文件、发邮件等工具。若整个 step 失败后重跑，已经成功的工具可能执行第二次。当前 Retry 只包裹 `model.generate()`，并且只有 `response.completed` 才提交结果，因此重复请求不会重放上一轮工具。
+
+面试短答：
+
+> 我把重试分层：Provider 做错误归一化，Runtime policy 决定模型请求是否重试，工具副作用不自动重放。Policy 只覆盖未提交的 generate 调用，用最大尝试、指数退避和估算 token 预算限制成本；400 直接失败，429、连接失败和流中断才可能重试。
+
+常见追问：模型请求重试就完全没有副作用吗？
+
+> 对本地 Agent State 和工具执行而言没有，因为部分响应没有提交；但供应商可能已经计算 token 或记录请求，所以仍可能重复计费。生产版本还要结合 request id、供应商幂等能力、Retry-After 和全局费用预算。
 
 ## 高频问题：你怎么证明 Agent Loop 真能工作？
 

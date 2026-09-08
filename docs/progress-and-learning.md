@@ -98,7 +98,7 @@ ModelResponse
 
 ### 正在进行：单 Agent Loop 的任务级验收
 
-当前优先建立 TaskVerifier、复杂分支场景、真实代码修复任务、取消生命周期和高层 Retry Policy。只有这些完成后，才进入 Context 策略质量比较和正式 benchmark。
+TaskVerifier、复杂分支场景、真实代码修复任务、取消生命周期和高层 Model Retry Policy 已完成基线。下一阶段进入真实 Summarizer、Structured Compaction、long-horizon retention 与 Trace Replay；在这些质量证据完成前不开始正式 benchmark。
 
 ### 尚未开始
 
@@ -189,8 +189,8 @@ ModelResponse
 
 不使用时间节点，只按阶段验收：
 
-1. 用 TaskVerifier 和复杂场景证明单 Agent Loop 能完成真实 Coding Task。
-2. 实现取消生命周期和 Provider 无关的高层 Retry Policy。
+1. 为 Full Summary 接入真实 Summarizer Provider，并补 timeout、有限重试和派生缓存。
+2. 实现 Structured Compaction 与 long-horizon retention 测试。
 3. 完成真实 Full Summary、Structured Compaction 和 retention 测试。
 4. 实现 Replay，再建立正式 Coding Task benchmark。
 5. 更换内存后完成 Docker Sandbox 实机验收。

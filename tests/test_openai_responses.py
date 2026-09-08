@@ -14,6 +14,7 @@ import httpx
 from runtime.actions import FinalAnswer, ToolCall
 from runtime.context import ContextBuilder
 from runtime.loop import AgentLoop, RunConfig
+from runtime.policies import ModelRetryPolicy
 from runtime.events import EventType
 from runtime.model import (
     ModelProviderError,
@@ -408,6 +409,109 @@ def test_sdk_retries_retryable_http_status_then_succeeds(status: int) -> None:
         response = run_generate(server, max_retries=1)
 
     assert response.items == [FinalAnswer("recovered")]
+    assert len(server.requests) == 2
+
+
+def test_runtime_retry_policy_recovers_from_429_with_sdk_retry_disabled(
+    tmp_path,
+) -> None:
+    error_body = json.dumps(
+        {
+            "error": {
+                "message": "rate limited",
+                "type": "rate_limit_error",
+                "param": None,
+                "code": "rate_limit_exceeded",
+            }
+        }
+    ).encode()
+    answer = message_item("runtime retry recovered")
+    with MockResponsesServer(
+        [
+            StreamScript([error_body], status=429),
+            StreamScript([sse(done_item(answer)), sse(completed([answer]))]),
+        ]
+    ) as server:
+        async def run():
+            client = ResponsesModelClient(
+                "test-model",
+                provider_name="mock-responses",
+                api_key="test-key",
+                base_url=server.base_url,
+                max_retries=0,
+                http_client=httpx.AsyncClient(trust_env=False),
+            )
+            loop = AgentLoop(
+                client,
+                ToolRuntime(ToolRegistry()),
+                ContextBuilder("system"),
+                RunConfig(trace_root=tmp_path / ".runs"),
+                model_retry_policy=ModelRetryPolicy(
+                    max_attempts=2,
+                    base_delay_seconds=0,
+                ),
+            )
+            try:
+                return await loop.run("recover from rate limit")
+            finally:
+                await client.close()
+
+        state = asyncio.run(run())
+
+    assert state.status == AgentStatus.COMPLETED
+    assert state.final_answer == "runtime retry recovered"
+    assert len(server.requests) == 2
+    assert EventType.MODEL_RETRY_SCHEDULED in [event.type for event in state.events]
+
+
+def test_runtime_retry_policy_recovers_from_incomplete_sse_stream(
+    tmp_path,
+) -> None:
+    partial_delta = {
+        "type": "response.output_text.delta",
+        "sequence_number": 1,
+        "item_id": "msg_partial",
+        "output_index": 0,
+        "content_index": 0,
+        "delta": "partial text that must not be committed",
+        "logprobs": [],
+    }
+    answer = message_item("fresh complete response")
+    with MockResponsesServer(
+        [
+            StreamScript([sse(partial_delta)]),
+            StreamScript([sse(done_item(answer)), sse(completed([answer]))]),
+        ]
+    ) as server:
+        async def run():
+            client = ResponsesModelClient(
+                "test-model",
+                provider_name="mock-responses",
+                api_key="test-key",
+                base_url=server.base_url,
+                max_retries=0,
+                http_client=httpx.AsyncClient(trust_env=False),
+            )
+            loop = AgentLoop(
+                client,
+                ToolRuntime(ToolRegistry()),
+                ContextBuilder("system"),
+                RunConfig(trace_root=tmp_path / ".runs"),
+                model_retry_policy=ModelRetryPolicy(
+                    max_attempts=2,
+                    base_delay_seconds=0,
+                ),
+            )
+            try:
+                return await loop.run("recover from stream disconnect")
+            finally:
+                await client.close()
+
+        state = asyncio.run(run())
+
+    assert state.status == AgentStatus.COMPLETED
+    assert state.final_answer == "fresh complete response"
+    assert state.messages == []
     assert len(server.requests) == 2
 
 

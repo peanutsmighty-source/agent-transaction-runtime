@@ -15,6 +15,8 @@ class EventType(StrEnum):
     CONTEXT_COMPACTION_APPLIED = "context_compaction_applied"
     CONTEXT_COMPACTION_FAILED = "context_compaction_failed"
     MODEL_REQUEST = "model_request"
+    MODEL_RETRY_SCHEDULED = "model_retry_scheduled"
+    MODEL_RETRY_EXHAUSTED = "model_retry_exhausted"
     MODEL_RESPONSE = "model_response"
     MODEL_RESPONSE_ITEM = "model_response_item"
     TASK_VERIFICATION_STARTED = "task_verification_started"

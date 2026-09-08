@@ -122,6 +122,10 @@ class AgentState:
             "status": self.status.value,
             "step_count": self.step,
             "model_calls": len([event for event in self.events if event.type.value == "model_request"]),
+            "model_retries": len([
+                event for event in self.events
+                if event.type.value == "model_retry_scheduled"
+            ]),
             "tool_calls": len(self.tool_history),
             "verification_attempts": [
                 attempt.to_dict() for attempt in self.verification_history

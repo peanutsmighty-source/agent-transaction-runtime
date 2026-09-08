@@ -22,3 +22,4 @@ The user is building this project to learn AI Agent engineering and prepare for 
 3. Include a short answer the user can say in an interview and at least one likely follow-up question.
 4. Never claim a mechanism is production-ready merely because its happy path works; name the untested boundaries.
 5. Prefer small executable experiments that prove the explanation over terminology-only documentation.
+6. At the end of each completed development task, summarize likely interviewer follow-up questions when they add learning value; skip this section when there is no meaningful follow-up.

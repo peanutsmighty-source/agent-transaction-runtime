@@ -11,7 +11,7 @@ from .context import ContextBuilder
 from .loop import AgentLoop, RunConfig
 from .model import FakeModelClient, ModelResponse, ModelUsage, ResponsesModelClient
 from .observer import ContextObserver
-from .policies import SlidingWindowCompaction, ToolApprovalPolicy
+from .policies import ModelRetryPolicy, SlidingWindowCompaction, ToolApprovalPolicy
 from .sandbox import DockerSandboxRunner, HostRunner
 from .tools import FileTool, ShellTool, ToolRegistry, ToolRuntime
 
@@ -107,6 +107,12 @@ async def _run(args: argparse.Namespace) -> int:
             if args.compaction == "sliding-window"
             else None
         ),
+        model_retry_policy=ModelRetryPolicy(
+            max_attempts=args.model_retry_max_attempts,
+            base_delay_seconds=args.model_retry_base_delay,
+            max_delay_seconds=args.model_retry_max_delay,
+            max_estimated_input_tokens=args.model_retry_token_budget,
+        ),
     )
     try:
         state = await loop.run(args.task)
@@ -155,7 +161,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Plaintext key file outside the repository; environment variables are safer",
     )
     run.add_argument("--model-timeout", type=float, default=60)
-    run.add_argument("--model-max-retries", type=int, default=2)
+    run.add_argument(
+        "--model-max-retries",
+        type=int,
+        default=0,
+        help="Transport SDK retries; keep at 0 when Runtime retry is enabled",
+    )
+    run.add_argument(
+        "--model-retry-max-attempts",
+        type=int,
+        default=3,
+        help="Maximum Runtime-level attempts for one uncommitted model request",
+    )
+    run.add_argument("--model-retry-base-delay", type=float, default=0.5)
+    run.add_argument("--model-retry-max-delay", type=float, default=4.0)
+    run.add_argument(
+        "--model-retry-token-budget",
+        type=int,
+        help="Optional estimated cumulative input-token budget per model turn",
+    )
     run.add_argument("--max-steps", type=int, default=20)
     run.add_argument("--tool-timeout", type=float, default=15)
     run.add_argument(

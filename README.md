@@ -89,6 +89,8 @@ python -m runtime run "inspect the workspace" `
 `deepseek-v4-flash` 验证普通响应与完整 Agent Loop 工具往返。
 协议与测试边界见 [Responses-compatible Provider](docs/openai-responses-provider.md)。
 
+CLI 默认由 Runtime 对尚未提交的模型请求最多尝试三次，并关闭 SDK 内部重试，避免两层重试次数相乘。可以通过 `--model-retry-max-attempts`、`--model-retry-base-delay`、`--model-retry-max-delay` 和 `--model-retry-token-budget` 调整；400 等非 retryable 错误不会重试，已执行的工具也不会重放。设计边界见[模型重试策略](docs/retry-policy.md)。
+
 使用已经在本机准备好的 Docker 镜像执行 shell：
 
 ```bash

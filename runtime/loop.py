@@ -7,14 +7,16 @@ from pathlib import Path
 
 from .actions import AssistantMessage, FinalAnswer, ReasoningSummary, ToolCall
 from .budget import ContextBudget
-from .context import ContextBuilder
+from .context import ContextBuilder, ModelContext
 from .events import AgentEvent, EventType
 from .model.base import ModelClient
 from .model.errors import ModelProviderError
+from .model.response import ModelResponse
 from .observer import ContextObserver
 from .policies import (
     ApprovalDecision,
     CompactionPolicy,
+    ModelRetryPolicy,
     RepeatedFailedActionDetector,
     ToolApprovalPolicy,
     ToolOutputPolicy,
@@ -48,7 +50,7 @@ class RunConfig:
 class AgentLoop:
     """The intentionally explicit state machine that drives a single agent run."""
 
-    def __init__(self, model: ModelClient, tools: ToolRuntime, context_builder: ContextBuilder, config: RunConfig | None = None, context_observer: ContextObserver | None = None, tool_output_policy: ToolOutputPolicy | None = None, context_budget: ContextBudget | None = None, approval_policy: ToolApprovalPolicy | None = None, compaction_policy: CompactionPolicy | None = None, task_verifier: TaskVerifier | None = None) -> None:
+    def __init__(self, model: ModelClient, tools: ToolRuntime, context_builder: ContextBuilder, config: RunConfig | None = None, context_observer: ContextObserver | None = None, tool_output_policy: ToolOutputPolicy | None = None, context_budget: ContextBudget | None = None, approval_policy: ToolApprovalPolicy | None = None, compaction_policy: CompactionPolicy | None = None, task_verifier: TaskVerifier | None = None, model_retry_policy: ModelRetryPolicy | None = None) -> None:
         self.model = model
         self.tools = tools
         self.context_builder = context_builder
@@ -66,6 +68,7 @@ class AgentLoop:
             raise ValueError("compaction_target_ratio_must_be_between_zero_and_one")
         self.compaction_policy = compaction_policy
         self.task_verifier = task_verifier
+        self.model_retry_policy = model_retry_policy or ModelRetryPolicy()
 
     async def run(self, task: str) -> AgentState:
         state = AgentState(task=task)
@@ -116,8 +119,7 @@ class AgentLoop:
                 trace.write_context(state.step, context)
                 self._event(state, trace, EventType.CONTEXT_BUILT, {"estimated_tokens": context.estimated_tokens, "item_count": len(context.messages)})
                 self._event(state, trace, EventType.CONTEXT_OBSERVED, state.context_stats.to_dict())
-                self._event(state, trace, EventType.MODEL_REQUEST, {"tool_count": len(self.tools.registry.schemas())})
-                response = await self.model.generate(context, self.tools.registry.schemas())
+                response = await self._generate_with_retry(state, trace, context)
                 item_types = [type(item).__name__ for item in response.items]
                 state.model_usage.add(response.usage.to_dict())
                 self._event(
@@ -192,6 +194,47 @@ class AgentLoop:
 
         trace.write_result(state)
         return state
+
+    async def _generate_with_retry(
+        self,
+        state: AgentState,
+        trace: TraceWriter,
+        context: ModelContext,
+    ) -> ModelResponse:
+        attempt = 1
+        tool_schemas = self.tools.registry.schemas()
+        while True:
+            self._event(
+                state,
+                trace,
+                EventType.MODEL_REQUEST,
+                {"tool_count": len(tool_schemas), "attempt": attempt},
+            )
+            try:
+                return await self.model.generate(context, tool_schemas)
+            except ModelProviderError as error:
+                decision = self.model_retry_policy.evaluate(
+                    error,
+                    failed_attempt=attempt,
+                    estimated_input_tokens=context.estimated_tokens,
+                )
+                event_data = {**error.to_dict(), **decision.to_dict()}
+                if not decision.should_retry:
+                    self._event(
+                        state,
+                        trace,
+                        EventType.MODEL_RETRY_EXHAUSTED,
+                        event_data,
+                    )
+                    raise
+                self._event(
+                    state,
+                    trace,
+                    EventType.MODEL_RETRY_SCHEDULED,
+                    event_data,
+                )
+                await asyncio.sleep(decision.delay_seconds)
+                attempt += 1
 
     async def _handle_final_answer(
         self,

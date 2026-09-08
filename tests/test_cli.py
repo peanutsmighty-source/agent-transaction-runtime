@@ -31,6 +31,28 @@ def test_cli_accepts_generic_responses_provider_configuration() -> None:
     assert args.model_max_retries == 0
     assert args.model_retry_max_attempts == 3
     assert args.model_retry_base_delay == 0.5
+
+
+def test_cli_accepts_real_full_summary_model_configuration() -> None:
+    args = build_parser().parse_args(
+        [
+            "run",
+            "inspect workspace",
+            "--workspace",
+            ".",
+            "--provider",
+            "responses",
+            "--model",
+            "agent-model",
+            "--compaction",
+            "full-summary",
+            "--summary-model",
+            "small-summary-model",
+        ]
+    )
+
+    assert args.compaction == "full-summary"
+    assert args.summary_model == "small-summary-model"
     assert args.model_retry_max_delay == 4.0
     assert args.model_retry_token_budget is None
 

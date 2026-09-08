@@ -35,7 +35,10 @@
 
 P0 证明短任务 Loop 后，再验证长任务不会因 Context 管理失真。
 
-- [ ] 为 Full Summary 接入真实 Summarizer Provider，并实现 timeout、有限重试和派生缓存。
+- [ ] 完成真实 Full Summary 运行链路：
+  - [x] 通过隔离、无工具的模型轮次接入 Responses Summarizer，并支持 CLI 独立 `--summary-model`。
+  - [ ] 为摘要调用实现 timeout、有限重试和费用边界。
+  - [ ] 实现以原始历史与配置为键的派生摘要缓存，不把摘要变成事实来源。
 - [ ] 实现 Structured Compaction：显式保存约束、决定、失败经验、修改文件和下一步。
 - [ ] 建立 long-horizon retention 测试：验证早期约束、关键决定和失败经验在压缩后仍可恢复。
 - [ ] 对同一历史比较 Sliding Window、Full Summary 和 Structured Compaction，记录遗漏、幻觉、token、延迟和费用。

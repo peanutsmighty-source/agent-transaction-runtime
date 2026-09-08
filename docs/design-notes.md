@@ -145,13 +145,13 @@ Sliding Window 会无条件忘掉窗口外历史，无法保留很早但仍有�
 
 ### 设计
 
-`CompactionPolicy.compact()` 改为异步协议，因为真正摘要需要额外模型调用。`FullSummaryCompaction` 注入独立 `Summarizer`；当前用 `FakeSummarizer` 建立确定性测试，不接真实 provider。策略永久保留 system/task，把历史按 `ContextUnit` 切成 older 和 recent，只总结 older，并生成独立 `SUMMARY` item。Summary 是临时派生视图，不写回 State；首版每次从完整旧历史重新总结，不增量总结旧摘要。
+`CompactionPolicy.compact()` 是异步协议，因为真正摘要需要额外模型调用。`FullSummaryCompaction` 注入独立 `Summarizer`；`FakeSummarizer` 负责确定性测试，`ModelSummarizer` 则通过隔离且无工具的 `ModelClient` 轮次接入真实 Provider。策略永久保留 system/task，把历史按 `ContextUnit` 切成 older 和 recent，只总结 older，并生成独立 `SUMMARY` item。Summary 是临时派生视图，不写回 State；首版每次从完整旧历史重新总结，不增量总结旧摘要。
 
 摘要调用失败、返回空值或结果超过剩余 token 预算时，策略发出结构化失败数据并回退 Sliding Window。event 记录压缩前后 token、摘要来源 item、原样保留 item、错误码和回退策略。
 
 ### 主流做法与取舍
 
-生产 Agent 同样需要通过压缩或保存外部状态延长任务跨度。OpenAI Responses compaction 使用 opaque 压缩项，公开的 Anthropic 指南也说明 Claude Code/agent harness 会自动 compact。我们的自然语言摘要可读、可替换、便于教学评测，但比 opaque/provider-native 压缩更容易被模型误读，也缺少真实 tokenizer、重试、缓存和质量保证。重新总结完整旧历史避免误差逐代累积，却会在真实 provider 下增加延迟和费用；后续可用派生缓存和 Structured Compaction 比较。
+生产 Agent 同样需要通过压缩或保存外部状态延长任务跨度。OpenAI Responses compaction 使用 opaque 压缩项，公开的 Anthropic 指南也说明 Claude Code/agent harness 会自动 compact。我们的自然语言摘要可读、可替换、便于教学评测，但比 opaque/provider-native 压缩更容易被模型误读，也缺少真实 tokenizer、摘要专用 retry、缓存和质量保证。重新总结完整旧历史避免误差逐代累积，却会在真实 provider 下增加延迟和费用；后续可用派生缓存和 Structured Compaction 比较。
 
 ## 重复失败工具调用检测
 

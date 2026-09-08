@@ -12,7 +12,7 @@ import pytest
 import httpx
 
 from runtime.actions import FinalAnswer, ToolCall
-from runtime.context import ContextBuilder
+from runtime.context import ContextBuilder, ContextItem, ContextItemType
 from runtime.loop import AgentLoop, RunConfig
 from runtime.policies import ModelRetryPolicy
 from runtime.events import EventType
@@ -23,6 +23,7 @@ from runtime.model import (
     ResponsesModelClient,
 )
 from runtime.state import AgentState, AgentStatus, Message
+from runtime.summarization import ModelSummarizer, SummaryRequest
 from runtime.tools import FileTool, ToolRegistry, ToolRuntime
 
 
@@ -513,6 +514,50 @@ def test_runtime_retry_policy_recovers_from_incomplete_sse_stream(
     assert state.final_answer == "fresh complete response"
     assert state.messages == []
     assert len(server.requests) == 2
+
+
+def test_model_summarizer_uses_real_responses_adapter_without_tools() -> None:
+    answer = message_item("Keep the public API stable.")
+    with MockResponsesServer(
+        [StreamScript([sse(done_item(answer)), sse(completed([answer]))])]
+    ) as server:
+        async def run() -> str:
+            client = ResponsesModelClient(
+                "summary-model",
+                provider_name="mock-summarizer",
+                api_key="test-key",
+                base_url=server.base_url,
+                max_retries=0,
+                http_client=httpx.AsyncClient(trust_env=False),
+            )
+            summarizer = ModelSummarizer(client)
+            try:
+                return await summarizer.summarize(
+                    SummaryRequest(
+                        items=(
+                            ContextItem(
+                                id="old_decision",
+                                type=ContextItemType.ASSISTANT,
+                                content="The public API must remain stable.",
+                                token_count=9,
+                            ),
+                        ),
+                        max_tokens=40,
+                    )
+                )
+            finally:
+                await client.close()
+
+        summary = asyncio.run(run())
+
+    assert summary == "Keep the public API stable."
+    assert server.requests[0]["model"] == "summary-model"
+    assert server.requests[0]["tools"] == []
+    assert [item["role"] for item in server.requests[0]["input"]] == [
+        "system",
+        "user",
+    ]
+    assert "old_decision" in server.requests[0]["input"][1]["content"]
 
 
 def test_timeout_is_normalized_as_retryable_provider_error() -> None:

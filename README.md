@@ -107,7 +107,13 @@ python -m runtime run "inspect the workspace" --workspace examples/demo_project 
 
 它只缩小模型可见的 Context，不会删除 AgentState 和 trace 中的完整历史。共享 `tool_call_id` 的调用与结果会作为一个不可拆分的 ContextUnit 保留或删除。Docker 的真实隔离验收因本机内存升级暂缓，状态见 `TODO.md`。
 
-Full Summary 当前通过 Python API 注入 `FullSummaryCompaction` 和 `Summarizer` 使用。首版提供确定性的 `FakeSummarizer` 用于实验与测试，尚未提供真实摘要模型的 CLI 选项。设计和失败回退见[Full Summary Compaction](docs/full-summary-compaction.md)。
+Full Summary 既可通过 Python API 注入，也可在 Responses Provider 下直接启用真实摘要模型：
+
+```bash
+python -m runtime run "inspect the workspace" --workspace examples/demo_project --provider responses --model agent-model --compaction full-summary --summary-model summary-model
+```
+
+`--summary-model` 省略时复用主模型 ID，但摘要仍使用独立 client 和不带工具的隔离模型轮次。摘要失败或超过预算时回退 Sliding Window；当前尚未为摘要调用实现独立 retry、硬输出 token 上限和派生缓存。确定性测试继续使用 `FakeSummarizer`。设计见[Full Summary Compaction](docs/full-summary-compaction.md)。
 
 ## 安全边界
 

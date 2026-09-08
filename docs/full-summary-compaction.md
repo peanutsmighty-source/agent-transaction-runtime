@@ -18,7 +18,9 @@ system + task + SUMMARY       + recent history
 
 真正的摘要通常需要调用另一个模型，模型请求会等待网络。因此 `CompactionPolicy.compact()` 现在是异步协议，`AgentLoop` 显式等待压缩完成。把它伪装成同步纯函数，会迫使未来 provider 在内部阻塞或把模型调用偷偷移到别处。
 
-`Summarizer` 是单独的可注入协议。当前 `FakeSummarizer` 返回测试预先给定的结果，使成功、失败和超预算路径都确定且免费；本阶段没有接入真实 provider。
+`Summarizer` 是单独的可注入协议。`FakeSummarizer` 返回测试预先给定的结果，使成功、失败和超预算路径都确定且免费；`ModelSummarizer` 则把待摘要历史序列化为数据，通过独立、无工具的模型轮次调用任意 `ModelClient`。CLI 在 Responses Provider 下支持 `--compaction full-summary`，并可用 `--summary-model` 选择独立模型。
+
+摘要系统指令明确要求把历史视为数据而不是新指令，以降低旧工具输出或消息中的 prompt injection 风险。它只能读取传入的 older items，不能访问 ToolRuntime，也不写 AgentState。模型仍可能不遵守要求，因此 tool call 和无正文响应会被拒绝，由 Full Summary 走显式回退。
 
 ## 事实与视图
 
@@ -50,4 +52,4 @@ system、task 和最近配置数量的 unit 永远优先保留。剩余 token �
 
 长程 Agent 使用压缩、近期窗口或外部状态跨越 context window 是常见做法。[OpenAI Responses compaction](https://developers.openai.com/api/docs/guides/latest-model#4-compaction-extending-effective-context) 把压缩结果作为不可解析的 opaque item 继续传入；[Anthropic 的公开指南](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices#context-awareness-and-multiwindow-workflows)也讨论 Claude Code/agent harness 的自动 compaction 和跨窗口状态保存。
 
-本项目选择可读的自然语言 `SUMMARY`，目的是观察摘要到底保留和遗漏了什么。代价是摘要可能产生事实错误，也可能遗漏结构化约束；它没有生产级 provider 的 tokenizer、重试、缓存、成本统计和质量评测。后续 Structured Compaction 与 long-horizon benchmark 将专门比较这些问题。
+本项目选择可读的自然语言 `SUMMARY`，目的是观察摘要到底保留和遗漏了什么。代价是摘要可能产生事实错误，也可能遗漏结构化约束。真实 Provider 链路已经接通，但摘要预算目前只是 prompt 要求与返回后的估算校验，并非 Provider 级硬输出上限；独立 retry、缓存、成本统计、真实 tokenizer 和质量评测仍未实现。后续 Structured Compaction 与 long-horizon retention 测试将专门比较这些问题。

@@ -108,6 +108,14 @@ RUNNING --用户取消并完成资源清理--> CANCELLED
 
 > Fake 测控制逻辑，Mock Server 测传输故障，真实 smoke 测供应商集成；三者不能互相替代。真实 smoke 成功不代表 benchmark 成功，因为任务长度、代码修改质量和长期稳定性还没有评测。
 
+## 高频问题：真实摘要模型为什么不能直接复用主 Agent Loop？
+
+摘要是 Context 的派生过程，不是新的 Agent 任务。如果把它放进主 Loop，摘要模型可能看到工具、修改 workspace，甚至把摘要答案误判为任务完成。当前 `ModelSummarizer` 只接收选定的 older items，使用独立 client 和无工具模型轮次，输出只作为临时 `SUMMARY` 视图；异常、tool call、空正文或超预算都会被拒绝并回退 Sliding Window。
+
+面试短答：
+
+> 我把 summarization 当作受限的派生服务，而不是子 Agent：输入范围固定、tools 为空、不能写 State，主 Loop 只消费通过预算检查的文本。这样缩小了副作用和 prompt injection 的影响面，但自然语言摘要仍可能遗漏或幻觉，所以还需要 retention 测试、结构化摘要和原始 trace 兜底。
+
 ## 当前不能声称什么
 
 - 不能声称生产可用：还没有生产限流、长期运行和完整安全验收。

@@ -11,8 +11,14 @@ from .context import ContextBuilder
 from .loop import AgentLoop, RunConfig
 from .model import FakeModelClient, ModelResponse, ModelUsage, ResponsesModelClient
 from .observer import ContextObserver
-from .policies import ModelRetryPolicy, SlidingWindowCompaction, ToolApprovalPolicy
+from .policies import (
+    FullSummaryCompaction,
+    ModelRetryPolicy,
+    SlidingWindowCompaction,
+    ToolApprovalPolicy,
+)
 from .sandbox import DockerSandboxRunner, HostRunner
+from .summarization import ModelSummarizer
 from .tools import FileTool, ShellTool, ToolRegistry, ToolRuntime
 
 
@@ -67,9 +73,12 @@ async def _run(args: argparse.Namespace) -> int:
     registry = ToolRegistry()
     registry.register(FileTool(workspace))
     registry.register(ShellTool(workspace, timeout_seconds=args.tool_timeout, runner=runner))
+    summary_model = None
     if args.provider == "fake":
         if args.responses is None:
             raise ValueError("--responses is required when --provider=fake")
+        if args.compaction == "full-summary":
+            raise ValueError("--compaction=full-summary requires a Responses provider")
         model = FakeModelClient(_load_responses(args.responses))
     else:
         if not args.model:
@@ -77,14 +86,36 @@ async def _run(args: argparse.Namespace) -> int:
         provider_name = args.provider_name or (
             "openai" if args.provider == "openai" else "responses"
         )
+        api_key = _read_api_key(args)
         model = ResponsesModelClient(
             args.model,
             provider_name=provider_name,
-            api_key=_read_api_key(args),
+            api_key=api_key,
             base_url=args.api_base_url,
             timeout=args.model_timeout,
             max_retries=args.model_max_retries,
         )
+        if args.compaction == "full-summary":
+            summary_model = ResponsesModelClient(
+                args.summary_model or args.model,
+                provider_name=f"{provider_name}_summarizer",
+                api_key=api_key,
+                base_url=args.api_base_url,
+                timeout=args.model_timeout,
+                max_retries=args.model_max_retries,
+            )
+    if args.compaction == "sliding-window":
+        compaction_policy = SlidingWindowCompaction(
+            min_recent_units=args.compaction_min_recent_units
+        )
+    elif args.compaction == "full-summary":
+        assert summary_model is not None
+        compaction_policy = FullSummaryCompaction(
+            ModelSummarizer(summary_model),
+            min_recent_units=args.compaction_min_recent_units,
+        )
+    else:
+        compaction_policy = None
     loop = AgentLoop(
         model=model,
         tools=ToolRuntime(registry),
@@ -102,11 +133,7 @@ async def _run(args: argparse.Namespace) -> int:
             allow_file_writes=args.allow_file_writes,
             allow_shell=args.allow_shell,
         ),
-        compaction_policy=(
-            SlidingWindowCompaction(min_recent_units=args.compaction_min_recent_units)
-            if args.compaction == "sliding-window"
-            else None
-        ),
+        compaction_policy=compaction_policy,
         model_retry_policy=ModelRetryPolicy(
             max_attempts=args.model_retry_max_attempts,
             base_delay_seconds=args.model_retry_base_delay,
@@ -117,8 +144,12 @@ async def _run(args: argparse.Namespace) -> int:
     try:
         state = await loop.run(args.task)
     finally:
-        if isinstance(model, ResponsesModelClient):
-            await model.close()
+        try:
+            if summary_model is not None:
+                await summary_model.close()
+        finally:
+            if isinstance(model, ResponsesModelClient):
+                await model.close()
     print(json.dumps(state.summary(), ensure_ascii=False, indent=2))
     if args.show_context:
         print()
@@ -204,12 +235,16 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-tool-output-chars", type=int, default=4_000)
     run.add_argument(
         "--compaction",
-        choices=("none", "sliding-window"),
+        choices=("none", "sliding-window", "full-summary"),
         default="none",
         help="Model-context compaction strategy",
     )
     run.add_argument("--compaction-target-ratio", type=float, default=0.5)
     run.add_argument("--compaction-min-recent-units", type=int, default=2)
+    run.add_argument(
+        "--summary-model",
+        help="Optional model ID for full-summary compaction; defaults to --model",
+    )
     run.add_argument("--allow-file-writes", action="store_true", help="Pre-approve FileTool write operations for this run")
     run.add_argument("--allow-shell", action="store_true", help="Pre-approve ShellTool calls for this run; this is not a sandbox")
     run.add_argument("--show-context", action="store_true")

@@ -98,7 +98,7 @@ ModelResponse
 
 ### 正在进行：单 Agent Loop 的任务级验收
 
-TaskVerifier、复杂分支场景、真实代码修复任务、取消生命周期和高层 Model Retry Policy 已完成基线。下一阶段进入真实 Summarizer、Structured Compaction、long-horizon retention 与 Trace Replay；在这些质量证据完成前不开始正式 benchmark。
+TaskVerifier、复杂分支场景、真实代码修复任务、取消生命周期和高层 Model Retry Policy 已完成基线。真实 Summarizer 的隔离 Provider 链路也已接通；下一步是摘要专用 timeout/retry/费用边界、派生缓存、long-horizon retention、Structured Compaction 与 Trace Replay。在这些质量证据完成前不开始正式 benchmark。
 
 ### 尚未开始
 

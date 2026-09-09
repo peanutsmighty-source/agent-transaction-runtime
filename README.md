@@ -115,6 +115,8 @@ python -m runtime run "inspect the workspace" --workspace examples/demo_project 
 
 `--summary-model` 省略时复用主模型 ID，但摘要仍使用独立 client 和不带工具的隔离模型轮次。摘要失败或超过预算时回退 Sliding Window；当前尚未为摘要调用实现独立 retry、硬输出 token 上限和派生缓存。确定性测试继续使用 `FakeSummarizer`。设计见[Full Summary Compaction](docs/full-summary-compaction.md)。
 
+Context/Memory 的下一阶段不把摘要视为事实：`MemoryRetentionPolicy` 已把保留等级、可信状态、风险和使用边界显式化，derived claim 用于计划、技术选型或代码修改时必须先核验。当前只是决策合同，尚未接入 Artifact read-back 和 Loop enforcement。详见[Memory/Retention Contract](docs/memory-retention-contract.md)与[风险登记](docs/context-memory-risks.md)。
+
 ## 安全边界
 
 `FileTool` 限制在指定的 workspace 内。文件写入和 shell 默认需要授权；CLI 的

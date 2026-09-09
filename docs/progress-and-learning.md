@@ -86,7 +86,7 @@ ModelResponse
 - 压缩只改变“这一轮给模型看的内容”，不会删除 `AgentState` 和 trace 中的完整历史。
 - `ToolCall` 与对应的 `ToolResult` 被组成一个 `ContextUnit`，压缩时一起保留或一起删除，不会留下半次工具交互。
 - `FullSummaryCompaction` 把较早的完整 unit 总结为可读 `SUMMARY`，同时原样保留最近 unit。
-- 摘要由可注入的异步 `Summarizer` 产生；当前使用 Fake，失败或摘要超预算时明确记录并回退 Sliding Window。
+- 摘要由可注入的异步 `Summarizer` 产生；`FakeSummarizer` 用于确定性测试，`ModelSummarizer` 已接入真实 Responses Provider；失败或摘要超预算时明确记录并回退 Sliding Window。
 
 ### 已完成代码、等待实机验收：Docker Sandbox
 
@@ -101,6 +101,8 @@ ModelResponse
 TaskVerifier、复杂分支场景、真实代码修复任务、取消生命周期和高层 Model Retry Policy 已完成基线。真实 Summarizer 的隔离 Provider 链路也已接通；下一步是摘要专用 timeout/retry/费用边界、派生缓存、long-horizon retention、Structured Compaction 与 Trace Replay。在这些质量证据完成前不开始正式 benchmark。
 
 新的设计结论是：provenance 不等于自动纠错，Evidence Retrieval 也会重新占用 Context。P1 因此先定义 Memory/Retention Contract，并用错误摘要注入测试证明 Runtime 能在高风险边界强制核验；之后再做 Structured State、Artifact Store、有界 Retrieval 和分层摘要，最后才优化摘要缓存。问题与方案清单见 `docs/context-memory-risks.md`。
+
+Memory/Retention Contract 的纯 Policy 已完成：保留等级与可信状态不再混为一谈，derived claim 在技术选型、计划和代码修改等 actionable boundary 会被标记为必须核验并阻断。它尚未自动取回证据；下一步先用错误摘要注入建立 Loop 级失败测试，再实现 State/Artifact 接线。详见 `docs/memory-retention-contract.md`。
 
 ### 尚未开始
 
@@ -191,8 +193,8 @@ TaskVerifier、复杂分支场景、真实代码修复任务、取消生命周�
 
 不使用时间节点，只按阶段验收：
 
-1. 定义 Memory/Retention Contract，并建立错误摘要注入和 long-horizon retention 测试。
-2. 实现 Pinned Context、Structured Working State 和 provenance schema。
+1. Memory/Retention Contract 已完成；下一步建立错误摘要注入和 long-horizon retention 测试。
+2. 实现 Pinned Context、Structured Working State、claim-level provenance schema 和 Policy 的 Loop enforcement。
 3. 实现 Artifact Store、有界 Evidence Retrieval 与 Runtime 强制 Verification Policy。
 4. 实现分层 Structured Compaction，再补摘要 timeout/retry/费用边界和派生缓存。
 5. 比较 Sliding Window、Full Summary、Structured/分层方案和可用的 Provider-native Compaction。
@@ -210,6 +212,7 @@ TaskVerifier、复杂分支场景、真实代码修复任务、取消生命周�
 - `docs/sliding-window-compaction.md`：当前压缩策略如何工作。
 - `docs/full-summary-compaction.md`：异步摘要、失败回退和事实保留如何工作。
 - `docs/context-memory-risks.md`：错误摘要、provenance、证据取回、注意力偏移等风险和计划中的应对方案。
+- `docs/memory-retention-contract.md`：记忆保留、可信状态、风险等级和强制核验边界。
 - `docs/openai-responses-provider.md`：真实 Provider、SSE 分片和断线边界如何工作。
 - `docs/interview-guide.md`：把已实现机制整理成面试可复述答案和追问。
 - `docs/design-notes.md`：所有关键设计决定的集中记录。

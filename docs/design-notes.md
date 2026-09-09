@@ -157,6 +157,8 @@ Sliding Window 会无条件忘掉窗口外历史，无法保留很早但仍有�
 
 Provenance 只回答“这条派生 claim 来自哪里”，不能证明 claim 正确，也不能保证模型会主动回查。Retrieval 会把证据重新加入当轮 Context，因此也不是免费记忆。后续主线采用风险分级：高风险 claim 在副作用、完成、过期或冲突边界由 Runtime 强制 read-back；证据按 token/item/call 预算取回短片段，阶段结束后移出活跃视图。无法被模型、用户或 verifier 察觉的错误仍是残余风险，必须通过错误摘要注入和 long-horizon retention 测试量化。完整风险登记见 `docs/context-memory-risks.md`。
 
+首个合同实现将 Retention（pinned/working/episodic）和 Trust（verified/derived/stale/contradicted）拆成正交维度。`MemoryRetentionPolicy` 根据 claim risk 与 use boundary 做确定性判断：derived claim 进入 planning、technical decision、code change、external side effect 或 completion 时必须先验证；stale/contradicted claim 直接阻断；verified high-risk claim 在高影响边界重新验证。当前只有决策和测试，尚未接入 State、Evidence Retrieval 或 Loop enforcement。详见 `docs/memory-retention-contract.md`。
+
 ## 重复失败工具调用检测
 
 ### 问题

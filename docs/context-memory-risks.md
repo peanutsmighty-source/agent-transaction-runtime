@@ -118,7 +118,7 @@ Sliding Window 保留为确定性兜底；Full Summary 保留为可读基线和�
 | 风险 | 应对方案 | 验证方式 | 当前状态 |
 |---|---|---|---|
 | 摘要错误但无人意识到 | 高风险 claim 由 Runtime 强制回读，不能依赖模型自觉 | 故意注入错误摘要，断言副作用/完成前发生核验 | 未实现 |
-| provenance 只有 ID、模型不主动查询 | 建立 Verification Policy 和固定核验边界 | Fake Model 不请求来源时，Runtime 仍触发 verifier | 未实现 |
+| provenance 只有 ID、模型不主动查询 | 建立 Verification Policy 和固定核验边界 | Fake Model 不请求来源时，Runtime 仍触发 verifier | 决策 Policy 已实现；Loop enforcement 未实现 |
 | 取回证据导致 Context 再增长 | 有界检索、片段读取、阶段后移出活跃窗口 | 统计 retrieval token 峰值和任务成功率 | 未实现 |
 | Full Summary 输入本身超过窗口 | 按 ContextUnit 分块、阶段 checkpoint、输入硬预算 | 超长旧历史不向 Provider 发送超限请求 | 未实现 |
 | 多层摘要误差累积 | 原始来源、版本化 checkpoint、周期性从原始事实重建 | 多次 compaction 后测遗漏和虚构 | 未实现 |

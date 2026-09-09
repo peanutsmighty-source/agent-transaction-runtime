@@ -116,6 +116,18 @@ RUNNING --用户取消并完成资源清理--> CANCELLED
 
 > 我把 summarization 当作受限的派生服务，而不是子 Agent：输入范围固定、tools 为空、不能写 State，主 Loop 只消费通过预算检查的文本。这样缩小了副作用和 prompt injection 的影响面，但自然语言摘要仍可能遗漏或幻觉，所以还需要 retention 测试、结构化摘要和原始 trace 兜底。
 
+## 高频问题：如果技术选型依赖了错误摘要怎么办？
+
+不能只在最终副作用前验证，因为错误可能更早污染计划、架构和代码。Memory/Retention Contract 把 claim 的可信状态与使用场景显式化：derived claim 一旦用于 planning、technical decision 或 code change，就返回 `must_verify` 并阻断继续使用，后续 Runtime 必须按 provenance read-back。Pinned 只表示保留优先级，不表示 claim 已验证。
+
+面试短答：
+
+> 我不依赖模型主动怀疑摘要，而是在派生事实进入可执行决定时建立 Runtime verification boundary。Provenance 提供证据地址，Policy 决定何时必须查；当前已完成确定性决策合同，Artifact Retrieval 和 Loop enforcement 仍未实现。
+
+常见追问：取回证据不是又增加 Context 吗？
+
+> 会，但只把相关片段按 token/item/call 预算短暂装入当前工作窗口，而不是每轮携带全部历史。它把持续增长改成按决策点支付的临时增长，并不声称检索免费。
+
 ## 当前不能声称什么
 
 - 不能声称生产可用：还没有生产限流、长期运行和完整安全验收。

@@ -1,5 +1,17 @@
 """Explicit runtime primitives for Agent Runtime Lab."""
 
+from .durable import (
+    DOMAIN_EVENT_SCHEMA_VERSION,
+    DomainEvent,
+    DomainEventType,
+    DurableTaskState,
+    JsonlDomainEventStore,
+    TaskBlocker,
+    TaskNode,
+    TaskNodeStatus,
+    reduce_domain_event,
+    replay_domain_events,
+)
 from .loop import AgentLoop, RunConfig
 from .memory import (
     ClaimRisk,
@@ -22,7 +34,12 @@ from .verification import (
 )
 
 __all__ = [
+    "DOMAIN_EVENT_SCHEMA_VERSION",
     "AgentLoop",
+    "DomainEvent",
+    "DomainEventType",
+    "DurableTaskState",
+    "JsonlDomainEventStore",
     "RunConfig",
     "AgentState",
     "AgentStatus",
@@ -39,5 +56,10 @@ __all__ = [
     "MemoryVerificationDecision",
     "ProvenanceRef",
     "TaskVerifier",
+    "TaskBlocker",
+    "TaskNode",
+    "TaskNodeStatus",
     "VerificationResult",
+    "reduce_domain_event",
+    "replay_domain_events",
 ]

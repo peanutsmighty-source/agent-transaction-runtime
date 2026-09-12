@@ -7,6 +7,7 @@
 Host/Docker 命令 Runner、结构化 execution trace、Tool Output Truncation 和
 Sliding Window Compaction、可注入 Fake Summarizer 的 Full Summary Compaction，以及
 Responses-compatible 流式 Provider 均已有实现。
+此外已加入尚未接入 AgentLoop 的 Durable Domain Event/Reducer 基线，用于验证任务状态可由事件确定性重建；
 尚未实现 OS 原生 sandbox、Structured Compaction 或 multi-agent；
 Docker 隔离也尚未完成实机验收。
 
@@ -116,6 +117,8 @@ python -m runtime run "inspect the workspace" --workspace examples/demo_project 
 `--summary-model` 省略时复用主模型 ID，但摘要仍使用独立 client 和不带工具的隔离模型轮次。摘要失败或超过预算时回退 Sliding Window；当前尚未为摘要调用实现独立 retry、硬输出 token 上限和派生缓存。确定性测试继续使用 `FakeSummarizer`。设计见[Full Summary Compaction](docs/full-summary-compaction.md)。
 
 Context/Memory 的下一阶段不把摘要视为事实：`MemoryRetentionPolicy` 已把保留等级、可信状态、风险和使用边界显式化，derived claim 用于计划、技术选型或代码修改时必须先核验。当前只是决策合同，尚未接入 Artifact read-back 和 Loop enforcement。详见[Memory/Retention Contract](docs/memory-retention-contract.md)与[风险登记](docs/context-memory-risks.md)。
+
+超长任务恢复的第一块基础也已独立实现：`DomainEvent` 使用稳定 ID、run ID、连续 sequence 和 schema version，纯 Reducer 可从事件流重建包含计划进度的 `DurableTaskState`，单 run JSONL Store 拒绝乱序和冲突重复。它目前没有接入现有 `AgentLoop`，也还没有 checkpoint/resume；设计和测试边界见[Durable Event Log 与 Reducer](docs/durable-event-log.md)。
 
 ## 安全边界
 

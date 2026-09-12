@@ -219,3 +219,9 @@ Memory/Retention Contract 的纯 Policy 已完成：保留等级与可信状态�
 - `TODO.md`：尚未完成和暂缓的任务。
 
 以后每完成一个关键机制，都应在本页补充：它解决什么问题、为什么这样设计、主流 Agent 是否使用类似机制、它有什么限制。
+
+## Durable Event Log / Reducer 基线
+
+超长任务不能只依赖 Context Summary。当前新增了独立于 Trace 合同的 `DomainEvent`、`DurableTaskState`、纯 Reducer 和单 run JSONL Store：计划本身保存在 Task State，节点开始、完成、证据 receipt ID、blocker 和下一动作都由事件更新。测试证明同一事件流在内存和落盘重放后得到相同状态，并拒绝循环依赖、依赖未完成、sequence 间隙、冲突重复和损坏 JSONL。
+
+这一步只证明“领域事件可以确定性重建 Task State”，还没有把现有 AgentLoop 改成可恢复 Runtime，也没有 Checkpoint、Lineage、schema migration 或 workspace reconcile。下一步先接入最小任务生命周期，再实现 checkpoint + delta replay，而不是继续增加摘要或 Memory Policy。详见 `docs/durable-event-log.md`。

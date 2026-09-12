@@ -36,6 +36,8 @@
 P0 证明短任务 Loop 后，再验证长任务不会因 Context 管理失真。
 
 - [x] 定义 Memory/Retention Contract：将 pinned/working/episodic 保留等级与 verified/derived/stale/contradicted 可信状态分离；`MemoryRetentionPolicy` 对技术选型等 actionable use 返回强制核验与阻断决定。接入 State、Artifact read-back 和 Loop enforcement 仍属后续项。
+- [x] 实现 Durable Domain Event/Reducer 基线：事件带稳定 ID、run ID、连续 sequence 和 schema version；单 run JSONL Store 支持幂等 append，并证明完整 replay 可重建包含 plan 进度的 Task State。尚未接入 AgentLoop、Checkpoint 或 Resume。
+- [ ] 将最小任务生命周期接入 Domain Event，并实现 `checkpoint snapshot + 后续事件 replay == 完整 replay` 的恢复测试。
 - [ ] 建立错误摘要注入与 long-horizon retention 测试：测量关键事实遗漏、虚构、过期事实使用、核验触发和多次压缩后的任务成功率。
 - [ ] 实现 Structured Working State 与 provenance schema：来源 ID 只是可追溯指针，高风险 claim 还必须有版本/hash 和核验策略。
 - [ ] 实现 Artifact Store 与有界 Evidence Retrieval：完整工具输出留在 Context 外，只按 token/item/call 预算取回当前所需片段。

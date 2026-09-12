@@ -160,3 +160,15 @@ RUNNING --用户取消并完成资源清理--> CANCELLED
 常见追问：发邮件、提交 Issue 这类任务怎么验证？
 
 > TaskVerifier 是协议，不是一个万能判断器。代码任务可以检查测试退出码；外部系统任务通常使用领域 verifier，通过 API 回读资源并断言收件人、标题、正文或 Issue 状态。工具返回成功只证明一次 API 调用完成，任务 verifier 检查的是最终业务后置条件。对于“对方是否阅读邮件”这种系统无法观察的结果，只能验证服务已接受或邮件出现在 Sent 中，不能虚构更强保证。
+
+## 高频问题：Domain Event、Trace 和 Reducer 有什么区别？
+
+Domain Event 是会改变任务状态、恢复时不能丢失的事实，例如计划被接受、节点完成和验证通过；Trace 面向调试，记录模型延迟、token、Context 和 retry 等运行细节。Reducer 是纯状态转换函数，按连续 sequence 将 Domain Event 归约成当前 `DurableTaskState`。当前项目已证明事件落盘后完整 replay 能得到相同的计划进度，但尚未把 Domain Event 接入 AgentLoop，也没有 checkpoint/resume。
+
+面试短答：
+
+> Trace 回答“系统怎么运行”，Domain Event 回答“任务状态发生了什么变化”。恢复依赖稳定、版本化、连续且可重放的 Domain Event；Reducer 确定性地把事件流物化成当前 Task State。两者可以共享事件总线，但不能共享同一个可靠性合同。
+
+常见追问：Checkpoint 里是否包含 Plan？
+
+> 包含。Checkpoint 将来保存的是 `DurableTaskState` 快照，因此包括计划节点、依赖、完成状态、证据 receipt、当前节点、blocker 和下一动作。它不是对原始对话做的自然语言摘要；原始过程由 Event Log 保存，Checkpoint 只是加速恢复的当前状态快照。

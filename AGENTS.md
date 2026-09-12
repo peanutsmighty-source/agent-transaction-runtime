@@ -23,3 +23,13 @@ The user is building this project to learn AI Agent engineering and prepare for 
 4. Never claim a mechanism is production-ready merely because its happy path works; name the untested boundaries.
 5. Prefer small executable experiments that prove the explanation over terminology-only documentation.
 6. At the end of each completed development task, summarize likely interviewer follow-up questions when they add learning value; skip this section when there is no meaningful follow-up.
+
+## Critical design evaluation
+
+User-proposed designs are hypotheses, not requirements or preferred solutions unless the user explicitly makes a product decision.
+
+1. Start by challenging the proposal: identify its failure modes, hidden assumptions, and the evidence still missing.
+2. Compare it with credible alternatives and the option of making no architectural change.
+3. Recommend a design only after stating the decision criteria and, where practical, running a focused experiment or failure-injection test.
+4. Do not add policies or abstractions merely because an example can be encoded as another rule. Prefer mechanisms that generalize, such as authoritative state, bounded retrieval, verification, and measurable quality gates.
+5. Clearly distinguish a plausible idea, a planned design, an implemented mechanism, and a mechanism whose behavior is supported by tests.

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- 增加版本化 Durable Domain Event、不可变 Task State Reducer 和单 run JSONL Event Store 基线。
+- 增加计划依赖、乱序/冲突事件、幂等 append、损坏日志和 replay 等价测试；尚未接入 AgentLoop 或 Checkpoint Resume。
+
 本文件记录 Agent Runtime Lab 每个阶段真正完成并经过验证的能力。
 
 项目仍处于 alpha 阶段。这里的“完成”表示对应机制已有代码和测试，

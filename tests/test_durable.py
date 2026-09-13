@@ -7,6 +7,7 @@ import pytest
 from runtime.durable import (
     DomainEvent,
     DomainEventType,
+    DurableTaskSession,
     JsonlDomainEventStore,
     JsonTaskCheckpointStore,
     TaskCheckpoint,
@@ -267,3 +268,118 @@ def test_checkpoint_replay_rejects_an_already_applied_event() -> None:
 def test_checkpoint_store_rejects_unsafe_run_id(tmp_path) -> None:
     with pytest.raises(ValueError, match="unsafe_characters"):
         JsonTaskCheckpointStore(tmp_path, "../other-run")
+
+
+def test_durable_session_recovers_checkpoint_plus_delta(tmp_path) -> None:
+    event_store = JsonlDomainEventStore(tmp_path / "events.jsonl")
+    checkpoint_store = JsonTaskCheckpointStore(
+        tmp_path / "checkpoints", "run-session"
+    )
+    session = DurableTaskSession.create(
+        event_store=event_store,
+        checkpoint_store=checkpoint_store,
+        task_id="fix-login",
+        goal="Fix login timeout",
+        acceptance_criteria=["login tests pass"],
+    )
+    session.accept_plan(
+        [
+            {"id": "implement", "description": "Implement the fix"},
+            {
+                "id": "verify",
+                "description": "Run tests",
+                "dependencies": ["implement"],
+            },
+        ]
+    )
+    session.start_node("implement")
+    session.complete_node("implement", evidence_receipt_ids=["receipt-file-1"])
+    checkpoint = session.save_checkpoint("git-tree-abc")
+    session.set_next_action("Run login tests")
+    session.start_node("verify")
+
+    resumed = DurableTaskSession.resume(
+        event_store=event_store,
+        checkpoint_store=checkpoint_store,
+    )
+
+    assert checkpoint.metadata.event_sequence == 4
+    assert resumed.state == session.state
+    assert resumed.state.current_node_id == "verify"
+    assert resumed.state.next_action == "Run login tests"
+
+
+def test_durable_session_recovers_without_checkpoint(tmp_path) -> None:
+    event_store = JsonlDomainEventStore(tmp_path / "events.jsonl")
+    checkpoint_store = JsonTaskCheckpointStore(
+        tmp_path / "checkpoints", "run-session"
+    )
+    session = DurableTaskSession.create(
+        event_store=event_store,
+        checkpoint_store=checkpoint_store,
+        task_id="task",
+        goal="Goal",
+    )
+    session.accept_plan([{"id": "work", "description": "Do the work"}])
+
+    resumed = DurableTaskSession.resume(
+        event_store=event_store,
+        checkpoint_store=checkpoint_store,
+    )
+
+    assert resumed.state == session.state
+
+
+def test_durable_session_recovers_event_persisted_before_memory_update(tmp_path) -> None:
+    event_store = JsonlDomainEventStore(tmp_path / "events.jsonl")
+    checkpoint_store = JsonTaskCheckpointStore(
+        tmp_path / "checkpoints", "run-session"
+    )
+    session = DurableTaskSession.create(
+        event_store=event_store,
+        checkpoint_store=checkpoint_store,
+        task_id="task",
+        goal="Goal",
+    )
+    session.accept_plan([{"id": "work", "description": "Do the work"}])
+    session.save_checkpoint()
+    persisted_before_crash = DomainEvent.create(
+        run_id="run-session",
+        sequence=3,
+        type=DomainEventType.TASK_NODE_STARTED,
+        data={"node_id": "work"},
+    )
+    event_store.append(persisted_before_crash)
+
+    resumed = DurableTaskSession.resume(
+        event_store=event_store,
+        checkpoint_store=checkpoint_store,
+    )
+
+    assert resumed.state.current_node_id == "work"
+    assert resumed.state.last_event_sequence == 3
+
+
+def test_durable_session_does_not_persist_invalid_transition(tmp_path) -> None:
+    event_store = JsonlDomainEventStore(tmp_path / "events.jsonl")
+    checkpoint_store = JsonTaskCheckpointStore(
+        tmp_path / "checkpoints", "run-session"
+    )
+    session = DurableTaskSession.create(
+        event_store=event_store,
+        checkpoint_store=checkpoint_store,
+        task_id="task",
+        goal="Goal",
+    )
+    session.accept_plan(
+        [
+            {"id": "first", "description": "First"},
+            {"id": "second", "description": "Second", "dependencies": ["first"]},
+        ]
+    )
+
+    with pytest.raises(ValueError, match="dependencies_not_completed"):
+        session.start_node("second")
+
+    assert [item.sequence for item in event_store.read_all()] == [1, 2]
+    assert session.state.last_event_sequence == 2

@@ -227,3 +227,5 @@ Memory/Retention Contract 的纯 Policy 已完成：保留等级与可信状态�
 这一步只证明“领域事件可以确定性重建 Task State”，还没有把现有 AgentLoop 改成可恢复 Runtime，也没有 Checkpoint、Lineage、schema migration 或 workspace reconcile。下一步先接入最小任务生命周期，再实现 checkpoint + delta replay，而不是继续增加摘要或 Memory Policy。详见 `docs/durable-event-log.md`。
 
 Checkpoint 存储基线随后已完成：快照直接序列化包含 plan 的 `DurableTaskState`，不是从对话重新生成摘要；metadata 记录快照覆盖的 event sequence，checksum 检测内容变化。单 run JSON Store 通过临时文件 + 原子替换发布快照，`replay_from_checkpoint` 只应用后续事件。测试已证明 snapshot + delta replay 与完整 replay 等价。仍未完成 AgentLoop 接线、自动里程碑、Resume CLI、schema migration、workspace reconcile 或 lineage。
+
+`DurableTaskSession` 随后补上调用顺序合同：先用纯 Reducer 计算并验证候选 State，再 append + fsync，最后发布预先算好的内存 State；它负责 sequence 分配和 checkpoint 恢复。故障注入测试模拟事件已经落盘但内存尚未更新时崩溃，新 Session 能重放该事件；非法状态转换则不会写入日志。Receipt 目前仍只是 plan 节点保存的 ID，没有 Receipt 类型或 Store。

@@ -118,7 +118,7 @@ python -m runtime run "inspect the workspace" --workspace examples/demo_project 
 
 Context/Memory 的下一阶段不把摘要视为事实：`MemoryRetentionPolicy` 已把保留等级、可信状态、风险和使用边界显式化，derived claim 用于计划、技术选型或代码修改时必须先核验。当前只是决策合同，尚未接入 Artifact read-back 和 Loop enforcement。详见[Memory/Retention Contract](docs/memory-retention-contract.md)与[风险登记](docs/context-memory-risks.md)。
 
-超长任务恢复的独立基础已实现：`DomainEvent` 使用稳定 ID、run ID、连续 sequence 和 schema version，纯 Reducer 可从事件流重建包含计划进度的 `DurableTaskState`，单 run JSONL Store 拒绝乱序和冲突重复。版本化 `TaskCheckpoint` 保存完整 Task State（包括 plan），通过 checksum 检测篡改，并支持从 snapshot 继续重放后续事件。它目前还没有接入现有 `AgentLoop`，因此 CLI 不会自动保存或恢复任务；设计和测试边界见[Durable Event Log 与 Reducer](docs/durable-event-log.md)。
+超长任务恢复的独立基础已实现：`DomainEvent` 使用稳定 ID、run ID、连续 sequence 和 schema version，纯 Reducer 可从事件流重建包含计划进度的 `DurableTaskState`，单 run JSONL Store 拒绝乱序和冲突重复。版本化 `TaskCheckpoint` 保存完整 Task State（包括 plan），通过 checksum 检测篡改，并支持从 snapshot 继续重放后续事件。`DurableTaskSession` 进一步统一 Reducer 预计算/验证、事件持久化、新 State 发布、sequence 分配、checkpoint 和恢复。它目前还没有接入现有 `AgentLoop`，因此 CLI 不会自动保存或恢复任务；设计和测试边界见[Durable Event Log 与 Reducer](docs/durable-event-log.md)。
 
 ## 安全边界
 

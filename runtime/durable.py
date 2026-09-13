@@ -562,6 +562,14 @@ class JsonTaskCheckpointStore:
             raise ValueError("checkpoint_store_run_id_mismatch")
         return checkpoint
 
+    def load_latest_or_none(self) -> TaskCheckpoint | None:
+        try:
+            return self.load_latest()
+        except ValueError as error:
+            if str(error) == "checkpoint_not_found":
+                return None
+            raise
+
     def _path_for(self, sequence: int) -> Path:
         return self.run_path / f"checkpoint-{sequence:08d}.json"
 
@@ -589,6 +597,152 @@ def replay_from_checkpoint(
             raise ValueError("checkpoint_replay_received_already_applied_event")
         state = reduce_domain_event(state, event)
     return state
+
+
+class DurableTaskSession:
+    """Validates by reducing, persists the event, then publishes the new state."""
+
+    def __init__(
+        self,
+        *,
+        event_store: JsonlDomainEventStore,
+        checkpoint_store: JsonTaskCheckpointStore,
+        state: DurableTaskState,
+    ) -> None:
+        if state.run_id != checkpoint_store.run_id:
+            raise ValueError("durable_session_run_id_mismatch")
+        self.event_store = event_store
+        self.checkpoint_store = checkpoint_store
+        self.state = state
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        event_store: JsonlDomainEventStore,
+        checkpoint_store: JsonTaskCheckpointStore,
+        task_id: str,
+        goal: str,
+        acceptance_criteria: list[str] | None = None,
+    ) -> DurableTaskSession:
+        if event_store.read_all():
+            raise ValueError("durable_session_event_store_must_be_empty")
+        created = DomainEvent.create(
+            run_id=checkpoint_store.run_id,
+            sequence=1,
+            type=DomainEventType.TASK_CREATED,
+            data={
+                "task_id": task_id,
+                "goal": goal,
+                "acceptance_criteria": acceptance_criteria or [],
+            },
+        )
+        state = reduce_domain_event(None, created)
+        event_store.append(created)
+        return cls(
+            event_store=event_store,
+            checkpoint_store=checkpoint_store,
+            state=state,
+        )
+
+    @classmethod
+    def resume(
+        cls,
+        *,
+        event_store: JsonlDomainEventStore,
+        checkpoint_store: JsonTaskCheckpointStore,
+    ) -> DurableTaskSession:
+        events = event_store.read_all()
+        if not events:
+            raise ValueError("cannot_resume_empty_domain_event_stream")
+        checkpoint = checkpoint_store.load_latest_or_none()
+        if checkpoint is None:
+            state = replay_domain_events(events)
+        else:
+            if checkpoint.metadata.run_id != events[0].run_id:
+                raise ValueError("checkpoint_event_store_run_id_mismatch")
+            if checkpoint.metadata.event_sequence > events[-1].sequence:
+                raise ValueError("checkpoint_is_ahead_of_event_store")
+            state = replay_from_checkpoint(
+                checkpoint,
+                (
+                    event
+                    for event in events
+                    if event.sequence > checkpoint.metadata.event_sequence
+                ),
+            )
+        return cls(
+            event_store=event_store,
+            checkpoint_store=checkpoint_store,
+            state=state,
+        )
+
+    def accept_plan(self, nodes: list[dict[str, Any]]) -> DomainEvent:
+        return self.record(DomainEventType.PLAN_ACCEPTED, {"nodes": nodes})
+
+    def start_node(self, node_id: str) -> DomainEvent:
+        return self.record(DomainEventType.TASK_NODE_STARTED, {"node_id": node_id})
+
+    def complete_node(
+        self,
+        node_id: str,
+        *,
+        evidence_receipt_ids: list[str] | None = None,
+    ) -> DomainEvent:
+        return self.record(
+            DomainEventType.TASK_NODE_COMPLETED,
+            {
+                "node_id": node_id,
+                "evidence_receipt_ids": evidence_receipt_ids or [],
+            },
+        )
+
+    def add_blocker(self, blocker_id: str, description: str) -> DomainEvent:
+        return self.record(
+            DomainEventType.BLOCKER_ADDED,
+            {"blocker_id": blocker_id, "description": description},
+        )
+
+    def resolve_blocker(self, blocker_id: str) -> DomainEvent:
+        return self.record(
+            DomainEventType.BLOCKER_RESOLVED,
+            {"blocker_id": blocker_id},
+        )
+
+    def set_next_action(self, next_action: str) -> DomainEvent:
+        return self.record(
+            DomainEventType.NEXT_ACTION_SET,
+            {"next_action": next_action},
+        )
+
+    def record(
+        self,
+        type: DomainEventType,
+        data: dict[str, Any],
+    ) -> DomainEvent:
+        event = DomainEvent.create(
+            run_id=self.state.run_id,
+            sequence=self.state.last_event_sequence + 1,
+            type=type,
+            data=data,
+        )
+        next_state = reduce_domain_event(self.state, event)
+        self.event_store.append(event)
+        self.state = next_state
+        return event
+
+    def save_checkpoint(self, workspace_revision: str | None = None) -> TaskCheckpoint:
+        latest = self.checkpoint_store.load_latest_or_none()
+        checkpoint_sequence = (
+            latest.metadata.checkpoint_sequence + 1 if latest is not None else 1
+        )
+        checkpoint = TaskCheckpoint.create(
+            task_state=self.state,
+            checkpoint_sequence=checkpoint_sequence,
+            workspace_revision=workspace_revision,
+        )
+        self.checkpoint_store.save(checkpoint)
+        return checkpoint
 
 
 def _validate_next_event(state: DurableTaskState, event: DomainEvent) -> None:

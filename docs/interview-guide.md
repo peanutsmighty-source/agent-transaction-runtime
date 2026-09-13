@@ -174,3 +174,5 @@ Domain Event 是会改变任务状态、恢复时不能丢失的事实，例如�
 > 包含。Checkpoint 将来保存的是 `DurableTaskState` 快照，因此包括计划节点、依赖、完成状态、证据 receipt、当前节点、blocker 和下一动作。它不是对原始对话做的自然语言摘要；原始过程由 Event Log 保存，Checkpoint 只是加速恢复的当前状态快照。
 
 实验证据：当前 `TaskCheckpoint` 已能保存完整 plan 状态并校验 checksum；从事件 1～4 生成快照，再重放事件 5～6，得到的 State 与事件 1～6 完整 replay 相同。当前仍由测试代码手工驱动，AgentLoop 尚未自动产生领域事件或 checkpoint。
+
+补充实现：`DurableTaskSession` 先用纯 Reducer 计算并验证候选 State，再 persist Event，最后把候选 State 发布到内存。预计算可以避免非法转换污染 Event Log；先持久化再发布内存状态，则保证进程在两者之间崩溃时，重启仍能重放已提交事件。它仍是独立协调层，尚未接入主 AgentLoop。

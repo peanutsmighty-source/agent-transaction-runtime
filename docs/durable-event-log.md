@@ -50,6 +50,24 @@ full replay(events 1..6)
 
 这说明 Checkpoint 能加速状态重建，但尚未验证 workspace 与外部系统仍和快照一致。
 
+## Durable Task Session
+
+直接要求每个调用者手工创建 sequence 和按正确顺序调用 Store/Reducer 很容易出错。`DurableTaskSession` 因此提供最小协调层：
+
+```text
+构造下一个 DomainEvent
+        ↓
+Reducer 计算候选 State，并验证转换是否合法
+        ↓
+Event Store append + fsync
+        ↓
+发布预先算好的新 DurableTaskState 到内存
+```
+
+Reducer 本身是纯函数，所以可以在写日志前安全计算候选 State。如果验证失败，非法事件不会污染日志；如果事件落盘后、内存 State 发布前进程崩溃，恢复时会从 Event Store 重放该事件。Session 支持接受 plan、开始/完成节点、blocker、next action、保存 checkpoint，以及从最新快照加后续事件恢复；没有快照时退回完整 replay。
+
+这是持久化状态机的独立应用服务，还不是 AgentLoop 接线。当前 AgentLoop 仍使用原有 `AgentState` 和 Trace，CLI 也没有 `--resume`。
+
 ## 当前没有完成什么
 
 这不是完整 Checkpoint/Resume：

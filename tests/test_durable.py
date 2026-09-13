@@ -8,9 +8,12 @@ from runtime.durable import (
     DomainEvent,
     DomainEventType,
     JsonlDomainEventStore,
+    JsonTaskCheckpointStore,
+    TaskCheckpoint,
     TaskNodeStatus,
     reduce_domain_event,
     replay_domain_events,
+    replay_from_checkpoint,
 )
 
 
@@ -183,3 +186,84 @@ def test_store_rejects_corrupt_jsonl(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="invalid_domain_event_at_line_1"):
         JsonlDomainEventStore(path).read_all()
+
+
+def test_checkpoint_contains_plan_and_delta_replay_matches_full_replay(tmp_path) -> None:
+    history = task_history()
+    state_at_checkpoint = replay_domain_events(history[:4])
+    checkpoint = TaskCheckpoint.create(
+        task_state=state_at_checkpoint,
+        checkpoint_sequence=1,
+        workspace_revision="git-tree-abc",
+        checkpoint_id="cp-1",
+        created_at=datetime(2026, 9, 13, tzinfo=UTC),
+    )
+    store = JsonTaskCheckpointStore(tmp_path / "checkpoints", "run-1")
+
+    assert store.save(checkpoint) is True
+    assert store.save(checkpoint) is False
+    loaded = store.load_latest()
+    resumed = replay_from_checkpoint(loaded, history[4:])
+
+    assert loaded.task_state.plan[0].status == TaskNodeStatus.COMPLETED
+    assert loaded.task_state.plan[1].status == TaskNodeStatus.PENDING
+    assert resumed == replay_domain_events(history)
+
+
+def test_checkpoint_store_loads_latest_committed_sequence(tmp_path) -> None:
+    history = task_history()
+    store = JsonTaskCheckpointStore(tmp_path / "checkpoints", "run-1")
+    first = TaskCheckpoint.create(
+        task_state=replay_domain_events(history[:2]),
+        checkpoint_sequence=1,
+        checkpoint_id="cp-1",
+        created_at=datetime(2026, 9, 13, 1, tzinfo=UTC),
+    )
+    second = TaskCheckpoint.create(
+        task_state=replay_domain_events(history[:4]),
+        checkpoint_sequence=2,
+        checkpoint_id="cp-2",
+        created_at=datetime(2026, 9, 13, 2, tzinfo=UTC),
+    )
+
+    store.save(first)
+    store.save(second)
+
+    assert store.load_latest() == second
+
+
+def test_checkpoint_checksum_detects_tampering(tmp_path) -> None:
+    checkpoint = TaskCheckpoint.create(
+        task_state=replay_domain_events(task_history()[:2]),
+        checkpoint_sequence=1,
+        checkpoint_id="cp-1",
+        created_at=datetime(2026, 9, 13, tzinfo=UTC),
+    )
+    store = JsonTaskCheckpointStore(tmp_path / "checkpoints", "run-1")
+    store.save(checkpoint)
+    path = tmp_path / "checkpoints" / "run-1" / "checkpoint-00000001.json"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Fix login timeout", "Pretend the goal changed"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="checkpoint_checksum_mismatch"):
+        store.load_latest()
+
+
+def test_checkpoint_replay_rejects_an_already_applied_event() -> None:
+    history = task_history()
+    checkpoint = TaskCheckpoint.create(
+        task_state=replay_domain_events(history[:4]),
+        checkpoint_sequence=1,
+    )
+
+    with pytest.raises(ValueError, match="already_applied_event"):
+        replay_from_checkpoint(checkpoint, [history[3]])
+
+
+def test_checkpoint_store_rejects_unsafe_run_id(tmp_path) -> None:
+    with pytest.raises(ValueError, match="unsafe_characters"):
+        JsonTaskCheckpointStore(tmp_path, "../other-run")

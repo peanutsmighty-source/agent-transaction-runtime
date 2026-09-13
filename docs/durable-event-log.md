@@ -35,21 +35,36 @@ Reducer 是纯状态转换：它返回新的不可变 State，不修改旧 State
 - 每次 append 后 flush + fsync；
 - 读取时拒绝损坏 JSON、跨 run、sequence 间隙和重复 event ID。
 
+## Checkpoint 与增量重放
+
+`TaskCheckpoint` 不是对话摘要，而是完整 `DurableTaskState` 的版本化快照，因此保存 goal、acceptance criteria、plan 节点及其依赖/状态/证据、当前节点、blocker 和下一动作。Metadata 保存 checkpoint/run/事件 sequence、workspace revision、schema version、时间和 checksum。
+
+`JsonTaskCheckpointStore` 为单 run 保存按 sequence 编号的 JSON：先写同目录临时文件并 flush + fsync，再以 `os.replace` 原子替换成正式文件。相同 checkpoint 重复保存按幂等处理，编号相同但内容不同则拒绝。载入时重新计算 checksum，因此手工修改 Task State 会被发现。
+
+`replay_from_checkpoint()` 从快照 State 开始，只接受 checkpoint 已覆盖 sequence 之后的连续事件。测试已证明：
+
+```text
+full replay(events 1..6)
+== checkpoint(events 1..4) + delta replay(events 5..6)
+```
+
+这说明 Checkpoint 能加速状态重建，但尚未验证 workspace 与外部系统仍和快照一致。
+
 ## 当前没有完成什么
 
 这不是完整 Checkpoint/Resume：
 
 - `AgentLoop` 尚未产生这些领域事件；
-- 没有 checkpoint save/load、checksum、schema migration 或 workspace reconcile；
+- Checkpoint save/load、checksum 和 delta replay 已完成；schema migration 与 workspace reconcile 未实现；
 - 没有 lineage、并发 writer、跨进程锁和日志压缩；
 - 没有 typed acceptance criteria 和 receipt store；
 - Trace Replay 与 Domain Event Replay 仍是不同的后续任务。
 
-下一步应先把最小任务生命周期接入领域事件，再实现 checkpoint = metadata + `DurableTaskState` snapshot，并验证“checkpoint + 后续事件”的结果与完整 replay 一致。
+下一步应把最小任务生命周期接入领域事件：让 AgentLoop 在运行中实际 append event、在里程碑保存 checkpoint，并通过 ResumeRequest 加载快照。当前 API 只能由调用者手工创建事件和 checkpoint，不能声称 Agent 自动恢复。
 
 ## 面试短答
 
-> Trace 解释 Runtime 怎么运行，Domain Event 记录任务状态发生了什么变化。Reducer 是确定性状态转换函数，把有序领域事件重建成当前 Task State。本项目先实现带版本和连续序号的单 run JSONL Event Store，并用 replay 等价测试证明基础合同；它还没有接入 AgentLoop，也不能声称已经支持 checkpoint 恢复。
+> Trace 解释 Runtime 怎么运行，Domain Event 记录任务状态发生了什么变化。Reducer 是确定性状态转换函数，把有序领域事件重建成当前 Task State。Checkpoint 保存包含 Plan 的 Task State 快照，snapshot + delta replay 已通过等价测试；它还没有接入 AgentLoop，所以尚不具备产品级自动恢复入口。
 
 常见追问：为什么不直接反序列化 Trace 恢复？
 

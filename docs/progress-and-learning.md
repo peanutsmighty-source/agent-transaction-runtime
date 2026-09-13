@@ -225,3 +225,5 @@ Memory/Retention Contract 的纯 Policy 已完成：保留等级与可信状态�
 超长任务不能只依赖 Context Summary。当前新增了独立于 Trace 合同的 `DomainEvent`、`DurableTaskState`、纯 Reducer 和单 run JSONL Store：计划本身保存在 Task State，节点开始、完成、证据 receipt ID、blocker 和下一动作都由事件更新。测试证明同一事件流在内存和落盘重放后得到相同状态，并拒绝循环依赖、依赖未完成、sequence 间隙、冲突重复和损坏 JSONL。
 
 这一步只证明“领域事件可以确定性重建 Task State”，还没有把现有 AgentLoop 改成可恢复 Runtime，也没有 Checkpoint、Lineage、schema migration 或 workspace reconcile。下一步先接入最小任务生命周期，再实现 checkpoint + delta replay，而不是继续增加摘要或 Memory Policy。详见 `docs/durable-event-log.md`。
+
+Checkpoint 存储基线随后已完成：快照直接序列化包含 plan 的 `DurableTaskState`，不是从对话重新生成摘要；metadata 记录快照覆盖的 event sequence，checksum 检测内容变化。单 run JSON Store 通过临时文件 + 原子替换发布快照，`replay_from_checkpoint` 只应用后续事件。测试已证明 snapshot + delta replay 与完整 replay 等价。仍未完成 AgentLoop 接线、自动里程碑、Resume CLI、schema migration、workspace reconcile 或 lineage。

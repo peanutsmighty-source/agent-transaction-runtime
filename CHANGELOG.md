@@ -4,6 +4,7 @@
 
 - 增加版本化 Durable Domain Event、不可变 Task State Reducer 和单 run JSONL Event Store 基线。
 - 增加计划依赖、乱序/冲突事件、幂等 append、损坏日志和 replay 等价测试；尚未接入 AgentLoop 或 Checkpoint Resume。
+- 增加带 checksum 的版本化 Task Checkpoint、单 run 原子文件 Store 和 delta replay；测试证明 checkpoint 中保留 plan，且 snapshot + 后续事件与完整 replay 得到相同 State。AgentLoop 自动保存/恢复尚未接入。
 
 本文件记录 Agent Runtime Lab 每个阶段真正完成并经过验证的能力。
 

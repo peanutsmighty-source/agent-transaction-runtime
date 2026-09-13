@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from hashlib import sha256
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -11,6 +13,8 @@ from uuid import uuid4
 
 
 DOMAIN_EVENT_SCHEMA_VERSION = 1
+CHECKPOINT_SCHEMA_VERSION = 1
+_SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 class DomainEventType(StrEnum):
@@ -48,6 +52,21 @@ class TaskNode:
             "evidence_receipt_ids": list(self.evidence_receipt_ids),
         }
 
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> TaskNode:
+        try:
+            return cls(
+                id=_required_text(value, "id"),
+                description=_required_text(value, "description"),
+                dependencies=_text_tuple(value.get("dependencies", [])),
+                status=TaskNodeStatus(value["status"]),
+                evidence_receipt_ids=_text_tuple(
+                    value.get("evidence_receipt_ids", [])
+                ),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(f"invalid_task_node: {error}") from error
+
 
 @dataclass(frozen=True)
 class TaskBlocker:
@@ -56,6 +75,13 @@ class TaskBlocker:
 
     def to_dict(self) -> dict[str, str]:
         return {"id": self.id, "description": self.description}
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> TaskBlocker:
+        return cls(
+            id=_required_text(value, "id"),
+            description=_required_text(value, "description"),
+        )
 
 
 @dataclass(frozen=True)
@@ -84,6 +110,170 @@ class DurableTaskState:
             "next_action": self.next_action,
             "last_event_sequence": self.last_event_sequence,
         }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> DurableTaskState:
+        try:
+            plan = value.get("plan", [])
+            blockers = value.get("blockers", [])
+            if not isinstance(plan, list) or not isinstance(blockers, list):
+                raise ValueError("task_state_plan_and_blockers_must_be_lists")
+            current_node_id = value.get("current_node_id")
+            next_action = value.get("next_action")
+            if current_node_id is not None and not isinstance(current_node_id, str):
+                raise ValueError("current_node_id_must_be_text_or_null")
+            if next_action is not None and not isinstance(next_action, str):
+                raise ValueError("next_action_must_be_text_or_null")
+            state = cls(
+                run_id=_required_text(value, "run_id"),
+                task_id=_required_text(value, "task_id"),
+                goal=_required_text(value, "goal"),
+                acceptance_criteria=_text_tuple(
+                    value.get("acceptance_criteria", [])
+                ),
+                plan=tuple(TaskNode.from_dict(node) for node in plan),
+                current_node_id=current_node_id,
+                blockers=tuple(TaskBlocker.from_dict(blocker) for blocker in blockers),
+                next_action=next_action,
+                last_event_sequence=int(value["last_event_sequence"]),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(f"invalid_durable_task_state: {error}") from error
+        if state.last_event_sequence <= 0:
+            raise ValueError("task_state_last_event_sequence_must_be_positive")
+        if state.current_node_id is not None:
+            current = _find_node(state.plan, state.current_node_id)
+            if current.status != TaskNodeStatus.RUNNING:
+                raise ValueError("current_task_node_must_be_running")
+        return state
+
+
+@dataclass(frozen=True)
+class CheckpointMetadata:
+    checkpoint_id: str
+    run_id: str
+    checkpoint_sequence: int
+    event_sequence: int
+    created_at: datetime
+    checksum: str
+    workspace_revision: str | None = None
+    schema_version: int = CHECKPOINT_SCHEMA_VERSION
+
+    def to_dict(self, *, include_checksum: bool = True) -> dict[str, Any]:
+        value = {
+            "checkpoint_id": self.checkpoint_id,
+            "run_id": self.run_id,
+            "checkpoint_sequence": self.checkpoint_sequence,
+            "event_sequence": self.event_sequence,
+            "created_at": self.created_at.isoformat(),
+            "workspace_revision": self.workspace_revision,
+            "schema_version": self.schema_version,
+        }
+        if include_checksum:
+            value["checksum"] = self.checksum
+        return value
+
+
+@dataclass(frozen=True)
+class TaskCheckpoint:
+    """Versioned snapshot of materialized task state, not a conversation summary."""
+
+    metadata: CheckpointMetadata
+    task_state: DurableTaskState
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        task_state: DurableTaskState,
+        checkpoint_sequence: int,
+        workspace_revision: str | None = None,
+        checkpoint_id: str | None = None,
+        created_at: datetime | None = None,
+    ) -> TaskCheckpoint:
+        if checkpoint_sequence <= 0:
+            raise ValueError("checkpoint_sequence_must_be_positive")
+        metadata = CheckpointMetadata(
+            checkpoint_id=checkpoint_id or f"cp-{uuid4().hex}",
+            run_id=task_state.run_id,
+            checkpoint_sequence=checkpoint_sequence,
+            event_sequence=task_state.last_event_sequence,
+            created_at=created_at or datetime.now(UTC),
+            checksum="",
+            workspace_revision=workspace_revision,
+        )
+        checkpoint = cls(metadata=metadata, task_state=task_state)
+        return cls(
+            metadata=replace(metadata, checksum=checkpoint.calculate_checksum()),
+            task_state=task_state,
+        )
+
+    def calculate_checksum(self) -> str:
+        canonical = json.dumps(
+            {
+                "metadata": self.metadata.to_dict(include_checksum=False),
+                "task_state": self.task_state.to_dict(),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return sha256(canonical).hexdigest()
+
+    def verify(self) -> None:
+        if self.metadata.schema_version != CHECKPOINT_SCHEMA_VERSION:
+            raise ValueError("unsupported_checkpoint_schema_version")
+        if not self.metadata.checkpoint_id.strip():
+            raise ValueError("checkpoint_id_must_not_be_empty")
+        if self.metadata.checkpoint_sequence <= 0:
+            raise ValueError("checkpoint_sequence_must_be_positive")
+        if self.metadata.created_at.tzinfo is None:
+            raise ValueError("checkpoint_timestamp_must_be_timezone_aware")
+        if self.metadata.run_id != self.task_state.run_id:
+            raise ValueError("checkpoint_run_id_mismatch")
+        if self.metadata.event_sequence != self.task_state.last_event_sequence:
+            raise ValueError("checkpoint_event_sequence_mismatch")
+        if self.metadata.checksum != self.calculate_checksum():
+            raise ValueError("checkpoint_checksum_mismatch")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "metadata": self.metadata.to_dict(),
+            "task_state": self.task_state.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> TaskCheckpoint:
+        try:
+            raw_metadata = value["metadata"]
+            if not isinstance(raw_metadata, dict):
+                raise ValueError("checkpoint_metadata_must_be_an_object")
+            workspace_revision = raw_metadata.get("workspace_revision")
+            if workspace_revision is not None and not isinstance(
+                workspace_revision, str
+            ):
+                raise ValueError("workspace_revision_must_be_text_or_null")
+            metadata = CheckpointMetadata(
+                checkpoint_id=_required_text(raw_metadata, "checkpoint_id"),
+                run_id=_required_text(raw_metadata, "run_id"),
+                checkpoint_sequence=int(raw_metadata["checkpoint_sequence"]),
+                event_sequence=int(raw_metadata["event_sequence"]),
+                created_at=datetime.fromisoformat(raw_metadata["created_at"]),
+                checksum=_required_text(raw_metadata, "checksum"),
+                workspace_revision=workspace_revision,
+                schema_version=int(raw_metadata["schema_version"]),
+            )
+            raw_state = value["task_state"]
+            if not isinstance(raw_state, dict):
+                raise ValueError("checkpoint_task_state_must_be_an_object")
+            checkpoint = cls(
+                metadata=metadata,
+                task_state=DurableTaskState.from_dict(raw_state),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(f"invalid_task_checkpoint: {error}") from error
+        checkpoint.verify()
+        return checkpoint
 
 
 @dataclass(frozen=True)
@@ -324,6 +514,81 @@ class JsonlDomainEventStore:
         if sequence < 0:
             raise ValueError("event_sequence_must_not_be_negative")
         return [event for event in self.read_all() if event.sequence > sequence]
+
+
+class JsonTaskCheckpointStore:
+    """Atomic-file checkpoint store for one run; concurrent writers are unsupported."""
+
+    def __init__(self, root: Path, run_id: str) -> None:
+        if not _SAFE_RUN_ID.fullmatch(run_id):
+            raise ValueError("checkpoint_run_id_contains_unsafe_characters")
+        self.root = root
+        self.run_id = run_id
+        self.run_path = root / run_id
+
+    def save(self, checkpoint: TaskCheckpoint) -> bool:
+        checkpoint.verify()
+        if checkpoint.metadata.run_id != self.run_id:
+            raise ValueError("checkpoint_store_run_id_mismatch")
+        self.run_path.mkdir(parents=True, exist_ok=True)
+        destination = self._path_for(checkpoint.metadata.checkpoint_sequence)
+        serialized = json.dumps(
+            checkpoint.to_dict(), ensure_ascii=False, indent=2, sort_keys=True
+        )
+        if destination.exists():
+            existing = self._read_path(destination)
+            if existing == checkpoint:
+                return False
+            raise ValueError("conflicting_checkpoint_sequence")
+
+        temporary = self.run_path / f".{destination.name}.{uuid4().hex}.tmp"
+        try:
+            with temporary.open("x", encoding="utf-8") as handle:
+                handle.write(serialized)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, destination)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+        return True
+
+    def load_latest(self) -> TaskCheckpoint:
+        paths = sorted(self.run_path.glob("checkpoint-*.json"))
+        if not paths:
+            raise ValueError("checkpoint_not_found")
+        checkpoint = self._read_path(paths[-1])
+        if checkpoint.metadata.run_id != self.run_id:
+            raise ValueError("checkpoint_store_run_id_mismatch")
+        return checkpoint
+
+    def _path_for(self, sequence: int) -> Path:
+        return self.run_path / f"checkpoint-{sequence:08d}.json"
+
+    @staticmethod
+    def _read_path(path: Path) -> TaskCheckpoint:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(f"invalid_checkpoint_file: {error}") from error
+        if not isinstance(raw, dict):
+            raise ValueError("invalid_checkpoint_file: root_must_be_an_object")
+        return TaskCheckpoint.from_dict(raw)
+
+
+def replay_from_checkpoint(
+    checkpoint: TaskCheckpoint,
+    later_events: Iterable[DomainEvent],
+) -> DurableTaskState:
+    """Resume a snapshot by applying only events after its covered sequence."""
+
+    checkpoint.verify()
+    state = checkpoint.task_state
+    for event in later_events:
+        if event.sequence <= checkpoint.metadata.event_sequence:
+            raise ValueError("checkpoint_replay_received_already_applied_event")
+        state = reduce_domain_event(state, event)
+    return state
 
 
 def _validate_next_event(state: DurableTaskState, event: DomainEvent) -> None:

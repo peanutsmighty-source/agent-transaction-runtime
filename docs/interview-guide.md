@@ -176,3 +176,5 @@ Domain Event 是会改变任务状态、恢复时不能丢失的事实，例如�
 实验证据：当前 `TaskCheckpoint` 已能保存完整 plan 状态并校验 checksum；从事件 1～4 生成快照，再重放事件 5～6，得到的 State 与事件 1～6 完整 replay 相同。当前仍由测试代码手工驱动，AgentLoop 尚未自动产生领域事件或 checkpoint。
 
 补充实现：`DurableTaskSession` 先用纯 Reducer 计算并验证候选 State，再 persist Event，最后把候选 State 发布到内存。预计算可以避免非法转换污染 Event Log；先持久化再发布内存状态，则保证进程在两者之间崩溃时，重启仍能重放已提交事件。它仍是独立协调层，尚未接入主 AgentLoop。
+
+本轮更完整的复习材料与分主题面试问题见 [Session 学习笔记](session-learning-notes.md)。其中明确区分了 Task/Run/Session/Lineage，解释多个隔离 Session 如何协作，以及多个 Agent 如何在 Coordinator 串行提交下共同推进一条 Lineage。后两项属于设计路线，当前尚未实现。

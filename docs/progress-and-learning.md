@@ -215,6 +215,7 @@ Memory/Retention Contract 的纯 Policy 已完成：保留等级与可信状态�
 - `docs/memory-retention-contract.md`：记忆保留、可信状态、风险等级和强制核验边界。
 - `docs/openai-responses-provider.md`：真实 Provider、SSE 分片和断线边界如何工作。
 - `docs/interview-guide.md`：把已实现机制整理成面试可复述答案和追问。
+- `docs/session-learning-notes.md`：本轮 Agent Loop、Context/Memory、恢复与 Multi-Agent 概念的完整复习笔记和面试题库。
 - `docs/design-notes.md`：所有关键设计决定的集中记录。
 - `TODO.md`：尚未完成和暂缓的任务。
 

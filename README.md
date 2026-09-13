@@ -7,12 +7,15 @@
 Host/Docker 命令 Runner、结构化 execution trace、Tool Output Truncation 和
 Sliding Window Compaction、可注入 Fake Summarizer 的 Full Summary Compaction，以及
 Responses-compatible 流式 Provider 均已有实现。
-此外已加入尚未接入 AgentLoop 的 Durable Domain Event/Reducer 基线，用于验证任务状态可由事件确定性重建；
+此外已加入尚未接入 AgentLoop 的 Durable Domain Event、Reducer、Checkpoint 与 Task Session 协调层，
+用于验证任务状态可由事件确定性重建，并能从快照继续重放；
 尚未实现 OS 原生 sandbox、Structured Compaction 或 multi-agent；
 Docker 隔离也尚未完成实机验收。
 
 如果你第一次阅读本项目，建议先看[项目进度与学习记录](docs/progress-and-learning.md)。
 它用尽量少的术语解释当前做到哪里、每个机制解决什么问题，以及接下来要学习什么。
+本轮从 Agent Loop、Context/Memory 到 Durable Task 与 Multi-Agent 边界的完整复习材料，见
+[Session 学习笔记](docs/session-learning-notes.md)。
 
 ## 关键设计
 

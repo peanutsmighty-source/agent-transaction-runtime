@@ -8,7 +8,8 @@ Host/Docker 命令 Runner、结构化 execution trace、Tool Output Truncation �
 Sliding Window Compaction、可注入 Fake Summarizer 的 Full Summary Compaction，以及
 Responses-compatible 流式 Provider 均已有实现。
 此外已加入尚未接入 AgentLoop 的 Durable Domain Event、Reducer、Checkpoint 与 Task Session 协调层，
-用于验证任务状态可由事件确定性重建，并能从快照继续重放；
+以及版本化 TaskPlan、typed Receipt Store 和 ResumeRequest，用于验证任务状态可由事件确定性重建、
+证据可核对，并能从满足身份和 workspace 约束的快照继续重放；
 尚未实现 OS 原生 sandbox、Structured Compaction 或 multi-agent；
 Docker 隔离也尚未完成实机验收。
 

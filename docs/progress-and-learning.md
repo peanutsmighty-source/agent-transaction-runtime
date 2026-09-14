@@ -229,4 +229,6 @@ Memory/Retention Contract 的纯 Policy 已完成：保留等级与可信状态�
 
 Checkpoint 存储基线随后已完成：快照直接序列化包含 plan 的 `DurableTaskState`，不是从对话重新生成摘要；metadata 记录快照覆盖的 event sequence，checksum 检测内容变化。单 run JSON Store 通过临时文件 + 原子替换发布快照，`replay_from_checkpoint` 只应用后续事件。测试已证明 snapshot + delta replay 与完整 replay 等价。仍未完成 AgentLoop 接线、自动里程碑、Resume CLI、schema migration、workspace reconcile 或 lineage。
 
-`DurableTaskSession` 随后补上调用顺序合同：先用纯 Reducer 计算并验证候选 State，再 append + fsync，最后发布预先算好的内存 State；它负责 sequence 分配和 checkpoint 恢复。故障注入测试模拟事件已经落盘但内存尚未更新时崩溃，新 Session 能重放该事件；非法状态转换则不会写入日志。Receipt 目前仍只是 plan 节点保存的 ID，没有 Receipt 类型或 Store。
+`DurableTaskSession` 随后补上调用顺序合同：先用纯 Reducer 计算并验证候选 State，再 append + fsync，最后发布预先算好的内存 State；它负责 sequence 分配和 checkpoint 恢复。故障注入测试模拟事件已经落盘但内存尚未更新时崩溃，新 Session 能重放该事件；非法状态转换则不会写入日志。这一阶段 Receipt 仍只是 plan 节点保存的 ID，下一阶段才增加类型和 Store。
+
+最小 Durable 合同随后完成：`TaskPlan`/`PlanNodeSpec` 把计划 ID、依赖与节点验收条件从任意字典变成版本化输入；`ExecutionReceipt`/`JsonReceiptStore` 保存带 checksum、归属和 evidence refs 的完成证据；`ResumeRequest` 明确 run/task/workspace 与是否必须从 checkpoint 恢复。Session 现在拒绝失败、缺失、损坏或跨 run/task/node 的 receipt，也拒绝恢复到错误 task/workspace。Domain Event/Checkpoint schema 因状态结构变化升到 v2。主 AgentLoop、CLI Resume、v1 migration、workspace reconcile 和跨 Receipt/Event 事务仍未完成。

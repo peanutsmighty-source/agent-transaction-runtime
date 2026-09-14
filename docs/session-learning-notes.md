@@ -6,7 +6,7 @@
 - **已设计但未接线**：接口或独立原型存在，主 `AgentLoop` 还不会使用。
 - **计划中**：只有问题分析和建议路线，不能在面试中说成已完成。
 
-当前完整离线测试基线是 `112 passed, 6 skipped`。6 个 skip 是默认关闭的真实 Provider smoke。
+当前完整离线测试基线是 `121 passed, 6 skipped`。6 个 skip 是默认关闭的真实 Provider smoke。
 
 ## 1. 先建立整体模型
 
@@ -162,7 +162,7 @@ Layered Summary 是“如何组织多份摘要”；Structured Checkpoint 是“
 
 通用 Agent 不可能预先写死所有成功条件。可行的分层是：Runtime 提供 verifier 协议与常见 catalog；Planner 为任务生成可审查的 acceptance criteria；领域工具提供 API 回读；不可机器观察的目标明确降级为人工确认。比如“发送邮件”只能验证服务接受、Sent 中存在且字段正确，不能声称收件人已阅读。
 
-当前仓库已有 File、Command、Composite verifier；Receipt 仍只是 plan 节点里的字符串 ID，尚无 typed Receipt/Store。
+当前仓库已有 File、Command、Composite verifier，也已有带归属、证据引用和 checksum 的 typed `ExecutionReceipt`/JSON Store。`DurableTaskSession` 会在节点完成和恢复时核对 receipt；真实 AgentLoop 工具/Verifier 结果尚未自动生成这些 receipt。
 
 ## 9. Domain Event、Reducer、Checkpoint 与恢复
 
@@ -194,7 +194,7 @@ Checkpoint 不只是 metadata，也包含完整结构化 `task_state`，其中�
 - 仅有 `fsync` 仍不能保证“外部副作用与事件记录同时成功”，也不解决多进程并发、目录项持久化和日志尾部修复。
 - 数据库 WAL（Write-Ahead Log）先记录即将提交的变更，再发布事务状态，可提供更系统的崩溃恢复；当前 JSONL Store 只是单 writer 教学基线。
 
-已实现并测试：Domain Event、纯 Reducer、JSONL Store、Checkpoint、checksum、snapshot + delta replay、`DurableTaskSession` 的 persist-before-publish 和崩溃恢复。尚未实现：主 Loop 接线、schema migration、workspace reconcile、typed Receipt、Resume CLI 和 Lineage。
+已实现并测试：Domain Event、纯 Reducer、JSONL Store、Checkpoint、checksum、snapshot + delta replay、版本化 TaskPlan、typed Receipt Store、ResumeRequest，以及 `DurableTaskSession` 的 persist-before-publish 和崩溃恢复。尚未实现：主 Loop 接线、schema migration、workspace reconcile、Resume CLI 和 Lineage。
 
 ## 10. 多 Session 为什么要隔离，上下文之间如何联系
 
@@ -375,11 +375,10 @@ A：常见方法是 Git worktree、容器/VM、copy-on-write workspace，加上�
 
 ## 14. 下一步开发优先级
 
-1. 定义最小 `Plan`、typed `Receipt` 和 `ResumeRequest` 合同，避免用字符串 ID 或伪一节点计划冒充恢复。
-2. 将 `DurableTaskSession` 接入 `AgentLoop` 的真实生命周期，产生可恢复 Domain Event。
-3. 加入崩溃点、重复提交、工具副作用和 workspace 漂移的失败注入测试。
-4. 实现 Resume CLI、兼容性检查、workspace reconcile 和 schema migration 边界。
-5. 再实现 Artifact Store、有界 Evidence Retrieval 与摘要失真 benchmark。
-6. 单 Agent 恢复语义稳定后，才实现 Lineage 分叉与最小 Multi-Agent Coordinator。
+1. 将 `DurableTaskSession` 接入 `AgentLoop` 的真实生命周期，把工具/Verifier 结果转成 Receipt 并产生可恢复 Domain Event。
+2. 加入崩溃点、重复提交、工具副作用和 workspace 漂移的失败注入测试。
+3. 实现 Resume CLI、兼容性检查、workspace reconcile 和 schema migration 边界。
+4. 再实现 Artifact Store、有界 Evidence Retrieval 与摘要失真 benchmark。
+5. 单 Agent 恢复语义稳定后，才实现 Lineage 分叉与最小 Multi-Agent Coordinator。
 
 面试时最重要的表达不是列出类名，而是说明：每个机制防止什么失败、事实源在哪里、怎样测试、还有哪些边界没有解决。

@@ -39,6 +39,7 @@ P0 证明短任务 Loop 后，再验证长任务不会因 Context 管理失真�
 - [x] 实现 Durable Domain Event/Reducer 基线：事件带稳定 ID、run ID、连续 sequence 和 schema version；单 run JSONL Store 支持幂等 append，并证明完整 replay 可重建包含 plan 进度的 Task State。尚未接入 AgentLoop、Checkpoint 或 Resume。
 - [x] 实现版本化 Task Checkpoint Store，并证明 `checkpoint snapshot + 后续事件 replay == 完整 replay`；Checkpoint 保存完整 plan 进度并用 checksum 检测篡改，采用临时文件 + 原子替换提交。
 - [x] 实现 `DurableTaskSession` 协调层：统一分配 event sequence，先用 Reducer 计算并验证候选 State，再持久化事件，最后发布新内存 State；支持有/无 checkpoint 的恢复以及已落盘未更新内存的崩溃场景。
+- [x] 定义最小 Durable 合同：版本化 `TaskPlan`/`PlanNodeSpec`、带 checksum 的 typed `ExecutionReceipt`/Store，以及显式 `ResumeRequest`；节点完成和恢复会核对 receipt、run、task、node 与 workspace revision。尚未提供 CLI Resume、迁移器或跨存储事务。
 - [ ] 将最小任务生命周期接入 Domain Event/Checkpoint：让 AgentLoop 实际产生领域事件、在里程碑保存快照，并提供 Resume 入口。workspace reconcile、schema migration 和 lineage 仍是后续边界。
 - [ ] 建立错误摘要注入与 long-horizon retention 测试：测量关键事实遗漏、虚构、过期事实使用、核验触发和多次压缩后的任务成功率。
 - [ ] 实现 Structured Working State 与 provenance schema：来源 ID 只是可追溯指针，高风险 claim 还必须有版本/hash 和核验策略。

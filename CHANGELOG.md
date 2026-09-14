@@ -7,6 +7,8 @@
 - 增加带 checksum 的版本化 Task Checkpoint、单 run 原子文件 Store 和 delta replay；测试证明 checkpoint 中保留 plan，且 snapshot + 后续事件与完整 replay 得到相同 State。AgentLoop 自动保存/恢复尚未接入。
 - 增加 `DurableTaskSession`，封装 Reducer 预计算/验证、事件持久化、新 State 发布、sequence 分配、里程碑快照和恢复；覆盖无快照完整 replay、快照增量 replay、非法转换不落盘，以及事件落盘后内存更新前崩溃的恢复。
 - 增加完整 Session 学习笔记，梳理 Agent Loop、Context/Memory、Compaction、Verifier、Receipt、Domain Event、Checkpoint、Lineage 与 Multi-Agent 隔离边界，并汇总面试问题和回答方向。
+- 增加版本化 `TaskPlan`、节点级 acceptance criteria、带 checksum 的 typed `ExecutionReceipt`/JSON Store 和 `ResumeRequest`；`DurableTaskSession` 现在要求验收节点提供 verification receipt，拒绝失败或跨 run/task/node 的 receipt，并在恢复时校验目标身份、workspace revision 与已引用 receipt。
+- Durable Domain Event 与 Checkpoint schema 升级为 v2；当前尚无 v1 -> v2 migration，主 AgentLoop 和 CLI Resume 仍未接入。
 
 本文件记录 Agent Runtime Lab 每个阶段真正完成并经过验证的能力。
 

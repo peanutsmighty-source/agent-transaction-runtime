@@ -11,9 +11,18 @@ from pathlib import Path
 from typing import Any, Iterable
 from uuid import uuid4
 
+from .durable_contracts import (
+    ExecutionReceipt,
+    JsonReceiptStore,
+    PlanNodeSpec,
+    ReceiptKind,
+    ReceiptStatus,
+    ResumeRequest,
+    TaskPlan,
+)
 
-DOMAIN_EVENT_SCHEMA_VERSION = 1
-CHECKPOINT_SCHEMA_VERSION = 1
+DOMAIN_EVENT_SCHEMA_VERSION = 2
+CHECKPOINT_SCHEMA_VERSION = 2
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
@@ -40,6 +49,7 @@ class TaskNode:
     id: str
     description: str
     dependencies: tuple[str, ...] = ()
+    acceptance_criteria: tuple[str, ...] = ()
     status: TaskNodeStatus = TaskNodeStatus.PENDING
     evidence_receipt_ids: tuple[str, ...] = ()
 
@@ -48,6 +58,7 @@ class TaskNode:
             "id": self.id,
             "description": self.description,
             "dependencies": list(self.dependencies),
+            "acceptance_criteria": list(self.acceptance_criteria),
             "status": self.status.value,
             "evidence_receipt_ids": list(self.evidence_receipt_ids),
         }
@@ -59,6 +70,9 @@ class TaskNode:
                 id=_required_text(value, "id"),
                 description=_required_text(value, "description"),
                 dependencies=_text_tuple(value.get("dependencies", [])),
+                acceptance_criteria=_text_tuple(
+                    value.get("acceptance_criteria", [])
+                ),
                 status=TaskNodeStatus(value["status"]),
                 evidence_receipt_ids=_text_tuple(
                     value.get("evidence_receipt_ids", [])
@@ -92,6 +106,7 @@ class DurableTaskState:
     task_id: str
     goal: str
     acceptance_criteria: tuple[str, ...]
+    plan_id: str | None = None
     plan: tuple[TaskNode, ...] = ()
     current_node_id: str | None = None
     blockers: tuple[TaskBlocker, ...] = ()
@@ -104,6 +119,7 @@ class DurableTaskState:
             "task_id": self.task_id,
             "goal": self.goal,
             "acceptance_criteria": list(self.acceptance_criteria),
+            "plan_id": self.plan_id,
             "plan": [node.to_dict() for node in self.plan],
             "current_node_id": self.current_node_id,
             "blockers": [blocker.to_dict() for blocker in self.blockers],
@@ -120,6 +136,9 @@ class DurableTaskState:
                 raise ValueError("task_state_plan_and_blockers_must_be_lists")
             current_node_id = value.get("current_node_id")
             next_action = value.get("next_action")
+            plan_id = value.get("plan_id")
+            if plan_id is not None and not isinstance(plan_id, str):
+                raise ValueError("plan_id_must_be_text_or_null")
             if current_node_id is not None and not isinstance(current_node_id, str):
                 raise ValueError("current_node_id_must_be_text_or_null")
             if next_action is not None and not isinstance(next_action, str):
@@ -131,6 +150,7 @@ class DurableTaskState:
                 acceptance_criteria=_text_tuple(
                     value.get("acceptance_criteria", [])
                 ),
+                plan_id=plan_id,
                 plan=tuple(TaskNode.from_dict(node) for node in plan),
                 current_node_id=current_node_id,
                 blockers=tuple(TaskBlocker.from_dict(blocker) for blocker in blockers),
@@ -141,10 +161,33 @@ class DurableTaskState:
             raise ValueError(f"invalid_durable_task_state: {error}") from error
         if state.last_event_sequence <= 0:
             raise ValueError("task_state_last_event_sequence_must_be_positive")
-        if state.current_node_id is not None:
-            current = _find_node(state.plan, state.current_node_id)
-            if current.status != TaskNodeStatus.RUNNING:
-                raise ValueError("current_task_node_must_be_running")
+        if state.plan:
+            if state.plan_id is None:
+                raise ValueError("task_state_plan_requires_plan_id")
+            TaskPlan(
+                plan_id=state.plan_id,
+                nodes=tuple(
+                    PlanNodeSpec(
+                        id=node.id,
+                        description=node.description,
+                        dependencies=node.dependencies,
+                        acceptance_criteria=node.acceptance_criteria,
+                    )
+                    for node in state.plan
+                ),
+            )
+        elif state.plan_id is not None:
+            raise ValueError("task_state_plan_id_requires_plan")
+        running_node_ids = tuple(
+            node.id for node in state.plan if node.status == TaskNodeStatus.RUNNING
+        )
+        if len(running_node_ids) > 1:
+            raise ValueError("task_state_cannot_have_multiple_running_nodes")
+        expected_running = (
+            () if state.current_node_id is None else (state.current_node_id,)
+        )
+        if running_node_ids != expected_running:
+            raise ValueError("task_state_current_node_must_match_running_node")
         return state
 
 
@@ -373,7 +416,20 @@ def reduce_domain_event(
     if event.type == DomainEventType.PLAN_ACCEPTED:
         if state.plan:
             raise ValueError("task_plan_already_accepted")
-        updated = replace(state, plan=_parse_plan(event.data.get("nodes")))
+        plan = TaskPlan.from_dict(event.data)
+        updated = replace(
+            state,
+            plan_id=plan.plan_id,
+            plan=tuple(
+                TaskNode(
+                    id=node.id,
+                    description=node.description,
+                    dependencies=node.dependencies,
+                    acceptance_criteria=node.acceptance_criteria,
+                )
+                for node in plan.nodes
+            ),
+        )
     elif event.type == DomainEventType.TASK_NODE_STARTED:
         node_id = _required_text(event.data, "node_id")
         if state.current_node_id is not None:
@@ -607,12 +663,16 @@ class DurableTaskSession:
         *,
         event_store: JsonlDomainEventStore,
         checkpoint_store: JsonTaskCheckpointStore,
+        receipt_store: JsonReceiptStore,
         state: DurableTaskState,
     ) -> None:
         if state.run_id != checkpoint_store.run_id:
             raise ValueError("durable_session_run_id_mismatch")
+        if state.run_id != receipt_store.run_id:
+            raise ValueError("durable_session_receipt_store_run_id_mismatch")
         self.event_store = event_store
         self.checkpoint_store = checkpoint_store
+        self.receipt_store = receipt_store
         self.state = state
 
     @classmethod
@@ -621,6 +681,7 @@ class DurableTaskSession:
         *,
         event_store: JsonlDomainEventStore,
         checkpoint_store: JsonTaskCheckpointStore,
+        receipt_store: JsonReceiptStore,
         task_id: str,
         goal: str,
         acceptance_criteria: list[str] | None = None,
@@ -642,6 +703,7 @@ class DurableTaskSession:
         return cls(
             event_store=event_store,
             checkpoint_store=checkpoint_store,
+            receipt_store=receipt_store,
             state=state,
         )
 
@@ -651,18 +713,36 @@ class DurableTaskSession:
         *,
         event_store: JsonlDomainEventStore,
         checkpoint_store: JsonTaskCheckpointStore,
+        receipt_store: JsonReceiptStore,
+        request: ResumeRequest,
     ) -> DurableTaskSession:
+        if request.run_id != checkpoint_store.run_id:
+            raise ValueError("resume_request_checkpoint_store_run_id_mismatch")
+        if request.run_id != receipt_store.run_id:
+            raise ValueError("resume_request_receipt_store_run_id_mismatch")
         events = event_store.read_all()
         if not events:
             raise ValueError("cannot_resume_empty_domain_event_stream")
+        if request.run_id != events[0].run_id:
+            raise ValueError("resume_request_event_store_run_id_mismatch")
         checkpoint = checkpoint_store.load_latest_or_none()
         if checkpoint is None:
+            if request.require_checkpoint:
+                raise ValueError("resume_request_requires_checkpoint")
+            if request.workspace_revision is not None:
+                raise ValueError("workspace_revision_requires_checkpoint")
             state = replay_domain_events(events)
         else:
             if checkpoint.metadata.run_id != events[0].run_id:
                 raise ValueError("checkpoint_event_store_run_id_mismatch")
             if checkpoint.metadata.event_sequence > events[-1].sequence:
                 raise ValueError("checkpoint_is_ahead_of_event_store")
+            if (
+                request.workspace_revision is not None
+                and checkpoint.metadata.workspace_revision
+                != request.workspace_revision
+            ):
+                raise ValueError("resume_workspace_revision_mismatch")
             state = replay_from_checkpoint(
                 checkpoint,
                 (
@@ -671,14 +751,18 @@ class DurableTaskSession:
                     if event.sequence > checkpoint.metadata.event_sequence
                 ),
             )
+        if state.task_id != request.task_id:
+            raise ValueError("resume_request_task_id_mismatch")
+        _validate_state_receipts(state, receipt_store)
         return cls(
             event_store=event_store,
             checkpoint_store=checkpoint_store,
+            receipt_store=receipt_store,
             state=state,
         )
 
-    def accept_plan(self, nodes: list[dict[str, Any]]) -> DomainEvent:
-        return self.record(DomainEventType.PLAN_ACCEPTED, {"nodes": nodes})
+    def accept_plan(self, plan: TaskPlan) -> DomainEvent:
+        return self.record(DomainEventType.PLAN_ACCEPTED, plan.to_dict())
 
     def start_node(self, node_id: str) -> DomainEvent:
         return self.record(DomainEventType.TASK_NODE_STARTED, {"node_id": node_id})
@@ -687,15 +771,28 @@ class DurableTaskSession:
         self,
         node_id: str,
         *,
-        evidence_receipt_ids: list[str] | None = None,
+        evidence_receipts: tuple[ExecutionReceipt, ...] = (),
     ) -> DomainEvent:
-        return self.record(
-            DomainEventType.TASK_NODE_COMPLETED,
-            {
+        for receipt in evidence_receipts:
+            _validate_receipt_for_node(self.state, node_id, receipt)
+        _validate_node_acceptance_receipts(self.state, node_id, evidence_receipts)
+        event = DomainEvent.create(
+            run_id=self.state.run_id,
+            sequence=self.state.last_event_sequence + 1,
+            type=DomainEventType.TASK_NODE_COMPLETED,
+            data={
                 "node_id": node_id,
-                "evidence_receipt_ids": evidence_receipt_ids or [],
+                "evidence_receipt_ids": [
+                    receipt.receipt_id for receipt in evidence_receipts
+                ],
             },
         )
+        next_state = reduce_domain_event(self.state, event)
+        for receipt in evidence_receipts:
+            self.receipt_store.save(receipt)
+        self.event_store.append(event)
+        self.state = next_state
+        return event
 
     def add_blocker(self, blocker_id: str, description: str) -> DomainEvent:
         return self.record(
@@ -755,47 +852,6 @@ def _validate_next_event(state: DurableTaskState, event: DomainEvent) -> None:
         )
 
 
-def _parse_plan(value: Any) -> tuple[TaskNode, ...]:
-    if not isinstance(value, list) or not value:
-        raise ValueError("accepted_plan_requires_nodes")
-    nodes: list[TaskNode] = []
-    for raw in value:
-        if not isinstance(raw, dict):
-            raise ValueError("task_plan_node_must_be_an_object")
-        nodes.append(
-            TaskNode(
-                id=_required_text(raw, "id"),
-                description=_required_text(raw, "description"),
-                dependencies=_text_tuple(raw.get("dependencies", [])),
-            )
-        )
-    ids = [node.id for node in nodes]
-    if len(ids) != len(set(ids)):
-        raise ValueError("task_plan_node_ids_must_be_unique")
-    known = set(ids)
-    for node in nodes:
-        if node.id in node.dependencies:
-            raise ValueError("task_plan_node_cannot_depend_on_itself")
-        if not set(node.dependencies).issubset(known):
-            raise ValueError("task_plan_dependency_not_found")
-    _validate_acyclic_plan(nodes)
-    return tuple(nodes)
-
-
-def _validate_acyclic_plan(nodes: list[TaskNode]) -> None:
-    dependencies = {node.id: set(node.dependencies) for node in nodes}
-    remaining = set(dependencies)
-    while remaining:
-        ready = {
-            node_id
-            for node_id in remaining
-            if not (dependencies[node_id] & remaining)
-        }
-        if not ready:
-            raise ValueError("task_plan_dependencies_must_be_acyclic")
-        remaining -= ready
-
-
 def _find_node(plan: tuple[TaskNode, ...], node_id: str) -> TaskNode:
     for node in plan:
         if node.id == node_id:
@@ -808,6 +864,47 @@ def _replace_node(
     updated: TaskNode,
 ) -> tuple[TaskNode, ...]:
     return tuple(updated if node.id == updated.id else node for node in plan)
+
+
+def _validate_receipt_for_node(
+    state: DurableTaskState,
+    node_id: str,
+    receipt: ExecutionReceipt,
+) -> None:
+    if receipt.run_id != state.run_id:
+        raise ValueError("receipt_run_id_mismatch")
+    if receipt.task_id != state.task_id:
+        raise ValueError("receipt_task_id_mismatch")
+    if receipt.node_id != node_id:
+        raise ValueError("receipt_node_id_mismatch")
+    if receipt.status != ReceiptStatus.SUCCEEDED:
+        raise ValueError("failed_receipt_cannot_complete_task_node")
+
+
+def _validate_node_acceptance_receipts(
+    state: DurableTaskState,
+    node_id: str,
+    receipts: tuple[ExecutionReceipt, ...],
+) -> None:
+    node = _find_node(state.plan, node_id)
+    if node.acceptance_criteria and not any(
+        receipt.kind == ReceiptKind.VERIFICATION for receipt in receipts
+    ):
+        raise ValueError("task_node_acceptance_requires_verification_receipt")
+
+
+def _validate_state_receipts(
+    state: DurableTaskState,
+    receipt_store: JsonReceiptStore,
+) -> None:
+    for node in state.plan:
+        receipts: list[ExecutionReceipt] = []
+        for receipt_id in node.evidence_receipt_ids:
+            receipt = receipt_store.load(receipt_id)
+            _validate_receipt_for_node(state, node.id, receipt)
+            receipts.append(receipt)
+        if node.status == TaskNodeStatus.COMPLETED:
+            _validate_node_acceptance_receipts(state, node.id, tuple(receipts))
 
 
 def _required_text(value: dict[str, Any], key: str) -> str:

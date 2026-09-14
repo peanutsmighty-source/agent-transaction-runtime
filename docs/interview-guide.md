@@ -178,3 +178,15 @@ Domain Event 是会改变任务状态、恢复时不能丢失的事实，例如�
 补充实现：`DurableTaskSession` 先用纯 Reducer 计算并验证候选 State，再 persist Event，最后把候选 State 发布到内存。预计算可以避免非法转换污染 Event Log；先持久化再发布内存状态，则保证进程在两者之间崩溃时，重启仍能重放已提交事件。它仍是独立协调层，尚未接入主 AgentLoop。
 
 本轮更完整的复习材料与分主题面试问题见 [Session 学习笔记](session-learning-notes.md)。其中明确区分了 Task/Run/Session/Lineage，解释多个隔离 Session 如何协作，以及多个 Agent 如何在 Coordinator 串行提交下共同推进一条 Lineage。后两项属于设计路线，当前尚未实现。
+
+## 高频问题：为什么恢复前还需要 Plan、Receipt 和 ResumeRequest 合同？
+
+如果 Plan 是任意字典，Runtime 无法稳定识别节点和依赖；如果完成证据只是字符串，任何不存在或失败的操作都可能被写成“已完成”；如果没有 ResumeRequest，Runtime 只能猜要恢复哪个 run、task 和 workspace。当前实现用版本化 TaskPlan 固定任务图，用带 checksum 和归属字段的 Receipt 保存证据，并用 ResumeRequest 明确恢复身份和 workspace 预期。
+
+面试短答：
+
+> Checkpoint 解决“从哪里继续”，但它不能独自证明“计划是否合法、过去的节点真的完成、调用者想恢复的是这个任务”。所以我增加了三个正交合同：TaskPlan 定义工作图，ExecutionReceipt 证明节点结果，ResumeRequest 约束恢复目标。独立测试覆盖循环依赖、失败/缺失/篡改/错归属 receipt，以及错误 task/workspace 恢复。它们尚未接主 AgentLoop，也没有跨存储事务或 schema migration。
+
+常见追问：为什么先保存 Receipt，再写节点完成事件？
+
+> 这样崩溃最多留下未被引用的孤儿 Receipt，不会得到“事件说已完成但证据不存在”的状态。要彻底消除孤儿还需要数据库事务、outbox/saga 或后台清理，当前 JSON 文件基线没有做到。

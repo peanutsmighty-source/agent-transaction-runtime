@@ -8,6 +8,7 @@ from runtime.durable import (
     DomainEvent,
     DomainEventType,
     DurableTaskSession,
+    DurableTaskState,
     JsonlDomainEventStore,
     JsonTaskCheckpointStore,
     TaskCheckpoint,
@@ -15,6 +16,15 @@ from runtime.durable import (
     reduce_domain_event,
     replay_domain_events,
     replay_from_checkpoint,
+)
+from runtime.durable_contracts import (
+    ExecutionReceipt,
+    JsonReceiptStore,
+    PlanNodeSpec,
+    ReceiptKind,
+    ReceiptStatus,
+    ResumeRequest,
+    TaskPlan,
 )
 
 
@@ -26,6 +36,43 @@ def event(sequence: int, type: DomainEventType, data: dict) -> DomainEvent:
         type=type,
         data=data,
         timestamp=datetime(2026, 9, 12, sequence, tzinfo=UTC),
+    )
+
+
+def plan() -> TaskPlan:
+    return TaskPlan(
+        plan_id="plan-fix-login",
+        nodes=(
+            PlanNodeSpec(id="implement", description="Implement the fix"),
+            PlanNodeSpec(
+                id="verify",
+                description="Run login tests",
+                dependencies=("implement",),
+                acceptance_criteria=("login tests pass",),
+            ),
+        ),
+    )
+
+
+def receipt(
+    *,
+    receipt_id: str = "receipt-file-1",
+    run_id: str = "run-session",
+    task_id: str = "fix-login",
+    node_id: str = "implement",
+    kind: ReceiptKind = ReceiptKind.WORKSPACE_CHANGE,
+    status: ReceiptStatus = ReceiptStatus.SUCCEEDED,
+) -> ExecutionReceipt:
+    return ExecutionReceipt.create(
+        receipt_id=receipt_id,
+        run_id=run_id,
+        task_id=task_id,
+        node_id=node_id,
+        kind=kind,
+        status=status,
+        summary="Changed the implementation",
+        evidence_refs=("artifact://diff/implement",),
+        created_at=datetime(2026, 9, 14, tzinfo=UTC),
     )
 
 
@@ -43,16 +90,7 @@ def task_history() -> list[DomainEvent]:
         event(
             2,
             DomainEventType.PLAN_ACCEPTED,
-            {
-                "nodes": [
-                    {"id": "implement", "description": "Implement the fix"},
-                    {
-                        "id": "verify",
-                        "description": "Run login tests",
-                        "dependencies": ["implement"],
-                    },
-                ]
-            },
+            plan().to_dict(),
         ),
         event(3, DomainEventType.TASK_NODE_STARTED, {"node_id": "implement"}),
         event(
@@ -102,9 +140,19 @@ def test_plan_must_be_acyclic() -> None:
                 2,
                 DomainEventType.PLAN_ACCEPTED,
                 {
+                    "plan_id": "plan-cycle",
+                    "schema_version": 1,
                     "nodes": [
-                        {"id": "a", "description": "A", "dependencies": ["b"]},
-                        {"id": "b", "description": "B", "dependencies": ["a"]},
+                        {
+                            "id": "a",
+                            "description": "A",
+                            "dependencies": ["b"],
+                        },
+                        {
+                            "id": "b",
+                            "description": "B",
+                            "dependencies": ["a"],
+                        },
                     ]
                 },
             ),
@@ -275,25 +323,18 @@ def test_durable_session_recovers_checkpoint_plus_delta(tmp_path) -> None:
     checkpoint_store = JsonTaskCheckpointStore(
         tmp_path / "checkpoints", "run-session"
     )
+    receipt_store = JsonReceiptStore(tmp_path / "receipts", "run-session")
     session = DurableTaskSession.create(
         event_store=event_store,
         checkpoint_store=checkpoint_store,
+        receipt_store=receipt_store,
         task_id="fix-login",
         goal="Fix login timeout",
         acceptance_criteria=["login tests pass"],
     )
-    session.accept_plan(
-        [
-            {"id": "implement", "description": "Implement the fix"},
-            {
-                "id": "verify",
-                "description": "Run tests",
-                "dependencies": ["implement"],
-            },
-        ]
-    )
+    session.accept_plan(plan())
     session.start_node("implement")
-    session.complete_node("implement", evidence_receipt_ids=["receipt-file-1"])
+    session.complete_node("implement", evidence_receipts=(receipt(),))
     checkpoint = session.save_checkpoint("git-tree-abc")
     session.set_next_action("Run login tests")
     session.start_node("verify")
@@ -301,6 +342,12 @@ def test_durable_session_recovers_checkpoint_plus_delta(tmp_path) -> None:
     resumed = DurableTaskSession.resume(
         event_store=event_store,
         checkpoint_store=checkpoint_store,
+        receipt_store=receipt_store,
+        request=ResumeRequest(
+            run_id="run-session",
+            task_id="fix-login",
+            workspace_revision="git-tree-abc",
+        ),
     )
 
     assert checkpoint.metadata.event_sequence == 4
@@ -314,17 +361,26 @@ def test_durable_session_recovers_without_checkpoint(tmp_path) -> None:
     checkpoint_store = JsonTaskCheckpointStore(
         tmp_path / "checkpoints", "run-session"
     )
+    receipt_store = JsonReceiptStore(tmp_path / "receipts", "run-session")
     session = DurableTaskSession.create(
         event_store=event_store,
         checkpoint_store=checkpoint_store,
+        receipt_store=receipt_store,
         task_id="task",
         goal="Goal",
     )
-    session.accept_plan([{"id": "work", "description": "Do the work"}])
+    session.accept_plan(
+        TaskPlan(
+            plan_id="plan-work",
+            nodes=(PlanNodeSpec(id="work", description="Do the work"),),
+        )
+    )
 
     resumed = DurableTaskSession.resume(
         event_store=event_store,
         checkpoint_store=checkpoint_store,
+        receipt_store=receipt_store,
+        request=ResumeRequest(run_id="run-session", task_id="task"),
     )
 
     assert resumed.state == session.state
@@ -335,13 +391,20 @@ def test_durable_session_recovers_event_persisted_before_memory_update(tmp_path)
     checkpoint_store = JsonTaskCheckpointStore(
         tmp_path / "checkpoints", "run-session"
     )
+    receipt_store = JsonReceiptStore(tmp_path / "receipts", "run-session")
     session = DurableTaskSession.create(
         event_store=event_store,
         checkpoint_store=checkpoint_store,
+        receipt_store=receipt_store,
         task_id="task",
         goal="Goal",
     )
-    session.accept_plan([{"id": "work", "description": "Do the work"}])
+    session.accept_plan(
+        TaskPlan(
+            plan_id="plan-work",
+            nodes=(PlanNodeSpec(id="work", description="Do the work"),),
+        )
+    )
     session.save_checkpoint()
     persisted_before_crash = DomainEvent.create(
         run_id="run-session",
@@ -354,6 +417,8 @@ def test_durable_session_recovers_event_persisted_before_memory_update(tmp_path)
     resumed = DurableTaskSession.resume(
         event_store=event_store,
         checkpoint_store=checkpoint_store,
+        receipt_store=receipt_store,
+        request=ResumeRequest(run_id="run-session", task_id="task"),
     )
 
     assert resumed.state.current_node_id == "work"
@@ -365,17 +430,24 @@ def test_durable_session_does_not_persist_invalid_transition(tmp_path) -> None:
     checkpoint_store = JsonTaskCheckpointStore(
         tmp_path / "checkpoints", "run-session"
     )
+    receipt_store = JsonReceiptStore(tmp_path / "receipts", "run-session")
     session = DurableTaskSession.create(
         event_store=event_store,
         checkpoint_store=checkpoint_store,
+        receipt_store=receipt_store,
         task_id="task",
         goal="Goal",
     )
     session.accept_plan(
-        [
-            {"id": "first", "description": "First"},
-            {"id": "second", "description": "Second", "dependencies": ["first"]},
-        ]
+        TaskPlan(
+            plan_id="plan-work",
+            nodes=(
+                PlanNodeSpec(id="first", description="First"),
+                PlanNodeSpec(
+                    id="second", description="Second", dependencies=("first",)
+                ),
+            ),
+        )
     )
 
     with pytest.raises(ValueError, match="dependencies_not_completed"):
@@ -383,3 +455,215 @@ def test_durable_session_does_not_persist_invalid_transition(tmp_path) -> None:
 
     assert [item.sequence for item in event_store.read_all()] == [1, 2]
     assert session.state.last_event_sequence == 2
+
+
+def test_task_plan_round_trips_with_node_acceptance_contract() -> None:
+    original = plan()
+
+    restored = TaskPlan.from_dict(original.to_dict())
+
+    assert restored == original
+    assert restored.nodes[1].acceptance_criteria == ("login tests pass",)
+
+
+def test_deserialized_state_rejects_plan_identity_and_running_node_mismatch() -> None:
+    state = replay_domain_events(task_history()[:3])
+    missing_plan_id = state.to_dict()
+    missing_plan_id["plan_id"] = None
+
+    with pytest.raises(ValueError, match="plan_requires_plan_id"):
+        DurableTaskState.from_dict(missing_plan_id)
+
+    missing_current_node = state.to_dict()
+    missing_current_node["current_node_id"] = None
+    with pytest.raises(ValueError, match="current_node_must_match"):
+        DurableTaskState.from_dict(missing_current_node)
+
+
+def test_receipt_store_round_trips_and_is_idempotent(tmp_path) -> None:
+    store = JsonReceiptStore(tmp_path / "receipts", "run-session")
+    original = receipt()
+
+    assert store.save(original) is True
+    assert store.save(original) is False
+    assert store.load(original.receipt_id) == original
+
+    conflicting = ExecutionReceipt.create(
+        receipt_id=original.receipt_id,
+        run_id=original.run_id,
+        task_id=original.task_id,
+        node_id=original.node_id,
+        kind=original.kind,
+        status=original.status,
+        summary="Different result",
+        evidence_refs=original.evidence_refs,
+        created_at=original.created_at,
+    )
+    with pytest.raises(ValueError, match="conflicting_receipt_id"):
+        store.save(conflicting)
+
+
+def test_receipt_checksum_detects_tampering(tmp_path) -> None:
+    store = JsonReceiptStore(tmp_path / "receipts", "run-session")
+    original = receipt()
+    store.save(original)
+    path = tmp_path / "receipts" / "run-session" / f"{original.receipt_id}.json"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Changed the implementation", "Pretend verification passed"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="receipt_checksum_mismatch"):
+        store.load(original.receipt_id)
+
+
+def test_completion_rejects_failed_receipt_without_persisting_it(tmp_path) -> None:
+    event_store = JsonlDomainEventStore(tmp_path / "events.jsonl")
+    checkpoint_store = JsonTaskCheckpointStore(
+        tmp_path / "checkpoints", "run-session"
+    )
+    receipt_store = JsonReceiptStore(tmp_path / "receipts", "run-session")
+    session = DurableTaskSession.create(
+        event_store=event_store,
+        checkpoint_store=checkpoint_store,
+        receipt_store=receipt_store,
+        task_id="fix-login",
+        goal="Fix login",
+    )
+    session.accept_plan(plan())
+    session.start_node("implement")
+    failed = receipt(status=ReceiptStatus.FAILED)
+
+    with pytest.raises(ValueError, match="failed_receipt"):
+        session.complete_node("implement", evidence_receipts=(failed,))
+
+    assert [item.sequence for item in event_store.read_all()] == [1, 2, 3]
+    with pytest.raises(ValueError, match="receipt_not_found"):
+        receipt_store.load(failed.receipt_id)
+
+
+def test_node_acceptance_criteria_require_verification_receipt(tmp_path) -> None:
+    event_store = JsonlDomainEventStore(tmp_path / "events.jsonl")
+    checkpoint_store = JsonTaskCheckpointStore(
+        tmp_path / "checkpoints", "run-session"
+    )
+    receipt_store = JsonReceiptStore(tmp_path / "receipts", "run-session")
+    session = DurableTaskSession.create(
+        event_store=event_store,
+        checkpoint_store=checkpoint_store,
+        receipt_store=receipt_store,
+        task_id="fix-login",
+        goal="Fix login",
+    )
+    session.accept_plan(plan())
+    session.start_node("implement")
+    session.complete_node("implement", evidence_receipts=(receipt(),))
+    session.start_node("verify")
+    wrong_kind = receipt(receipt_id="receipt-wrong", node_id="verify")
+
+    with pytest.raises(ValueError, match="requires_verification_receipt"):
+        session.complete_node("verify", evidence_receipts=(wrong_kind,))
+
+    verified = receipt(
+        receipt_id="receipt-verification",
+        node_id="verify",
+        kind=ReceiptKind.VERIFICATION,
+    )
+    session.complete_node("verify", evidence_receipts=(verified,))
+
+    assert session.state.plan[1].status == TaskNodeStatus.COMPLETED
+
+
+def test_resume_request_rejects_wrong_task_and_workspace(tmp_path) -> None:
+    event_store = JsonlDomainEventStore(tmp_path / "events.jsonl")
+    checkpoint_store = JsonTaskCheckpointStore(
+        tmp_path / "checkpoints", "run-session"
+    )
+    receipt_store = JsonReceiptStore(tmp_path / "receipts", "run-session")
+    session = DurableTaskSession.create(
+        event_store=event_store,
+        checkpoint_store=checkpoint_store,
+        receipt_store=receipt_store,
+        task_id="fix-login",
+        goal="Fix login",
+    )
+    session.accept_plan(plan())
+    session.save_checkpoint("git-tree-current")
+
+    with pytest.raises(ValueError, match="workspace_revision_mismatch"):
+        DurableTaskSession.resume(
+            event_store=event_store,
+            checkpoint_store=checkpoint_store,
+            receipt_store=receipt_store,
+            request=ResumeRequest(
+                run_id="run-session",
+                task_id="fix-login",
+                workspace_revision="git-tree-stale",
+            ),
+        )
+
+    with pytest.raises(ValueError, match="task_id_mismatch"):
+        DurableTaskSession.resume(
+            event_store=event_store,
+            checkpoint_store=checkpoint_store,
+            receipt_store=receipt_store,
+            request=ResumeRequest(run_id="run-session", task_id="other-task"),
+        )
+
+
+def test_resume_can_require_checkpoint_instead_of_silent_full_replay(tmp_path) -> None:
+    event_store = JsonlDomainEventStore(tmp_path / "events.jsonl")
+    checkpoint_store = JsonTaskCheckpointStore(
+        tmp_path / "checkpoints", "run-session"
+    )
+    receipt_store = JsonReceiptStore(tmp_path / "receipts", "run-session")
+    DurableTaskSession.create(
+        event_store=event_store,
+        checkpoint_store=checkpoint_store,
+        receipt_store=receipt_store,
+        task_id="task",
+        goal="Goal",
+    )
+
+    with pytest.raises(ValueError, match="requires_checkpoint"):
+        DurableTaskSession.resume(
+            event_store=event_store,
+            checkpoint_store=checkpoint_store,
+            receipt_store=receipt_store,
+            request=ResumeRequest(
+                run_id="run-session",
+                task_id="task",
+                require_checkpoint=True,
+            ),
+        )
+
+
+def test_resume_rejects_completed_node_when_receipt_is_missing(tmp_path) -> None:
+    event_store = JsonlDomainEventStore(tmp_path / "events.jsonl")
+    checkpoint_store = JsonTaskCheckpointStore(
+        tmp_path / "checkpoints", "run-session"
+    )
+    receipt_store = JsonReceiptStore(tmp_path / "receipts", "run-session")
+    session = DurableTaskSession.create(
+        event_store=event_store,
+        checkpoint_store=checkpoint_store,
+        receipt_store=receipt_store,
+        task_id="fix-login",
+        goal="Fix login",
+    )
+    session.accept_plan(plan())
+    session.start_node("implement")
+    saved = receipt()
+    session.complete_node("implement", evidence_receipts=(saved,))
+    receipt_path = tmp_path / "receipts" / "run-session" / f"{saved.receipt_id}.json"
+    receipt_path.unlink()
+
+    with pytest.raises(ValueError, match="receipt_not_found"):
+        DurableTaskSession.resume(
+            event_store=event_store,
+            checkpoint_store=checkpoint_store,
+            receipt_store=receipt_store,
+            request=ResumeRequest(run_id="run-session", task_id="fix-login"),
+        )

@@ -10,6 +10,7 @@ This repository is a learning project. When implementing or explaining an Agent 
 4. Explain why this design was chosen, how mainstream coding agents use a similar concept, and where our implementation differs.
 5. State limitations and tradeoffs. Distinguish implemented behavior from planned behavior.
 6. Only after the explanation, summarize files changed and tests run.
+7. Every completion report must explain in plain language what each implemented mechanism does, how data flows through it, how the code enforces the contract, and which failure it prevents. A class/file list and test count alone are not an acceptable teaching handoff.
 
 Do not report a list of added classes or files without explaining what each one does and why it exists.
 
